@@ -77,6 +77,8 @@ illinois_boundary <- states(cb = TRUE, year = 2023) %>%
 # Load GTFS utility functions from extracted modules
 source("R/gtfs_download.R")
 source("R/gtfs_normalize.R")
+source("R/gtfs_validate.R")
+source("R/spatial_validate.R")
 ```
 
 ```{r download_gtfs, results='hide'}
@@ -95,6 +97,25 @@ pace_data <- read_normalize_gtfs("pace", pace_dir)
 metra_data <- read_normalize_gtfs("metra", metra_dir)
 metro_stl_data <- read_normalize_gtfs("metro_stl", metro_stl_dir)
 cumtd_data <- read_normalize_gtfs("cumtd", cumtd_dir)
+
+## VALIDATION CHECKPOINT: Check GTFS data quality
+cat("\n=== GTFS Data Quality Validation ===\n\n")
+validation_results <- validate_all_gtfs(list(
+  cta = cta_data,
+  pace = pace_data,
+  metra = metra_data,
+  metro_stl = metro_stl_data,
+  cumtd = cumtd_data
+))
+print_validation_report(validation_results)
+
+# Check if any critical issues were found
+critical_failures <- sapply(validation_results, function(x) {
+  !x$valid && any(!grepl("WARNING", unlist(x[c("structure", "coordinates", "relationships")]$issues)))
+})
+if (any(critical_failures)) {
+  warning("Critical data quality issues detected - review validation report above")
+}
 
 # Combine data from all agencies
 # Function to convert all integer64 columns to regular integer/character
