@@ -36,7 +36,7 @@ Parking mandates, also known as parking minimums, are zoning regulations that re
 
 ### Enter: The People Over Parking Act
 
-```{r packages}
+```{r packages, results='hide'}
 # Set CRAN mirror
 options(repos = c(CRAN = "https://cloud.r-project.org/"))
 
