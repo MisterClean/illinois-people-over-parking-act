@@ -80,6 +80,8 @@ source("R/gtfs_normalize.R")
 source("R/gtfs_validate.R")
 source("R/spatial_validate.R")
 source("R/spatial_clustering.R")
+source("R/frequency_calc.R")
+source("R/hub_identification.R")
 ```
 
 ```{r download_gtfs, results='hide'}
