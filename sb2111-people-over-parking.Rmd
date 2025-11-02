@@ -79,6 +79,7 @@ source("R/gtfs_download.R")
 source("R/gtfs_normalize.R")
 source("R/gtfs_validate.R")
 source("R/spatial_validate.R")
+source("R/spatial_clustering.R")
 ```
 
 ```{r download_gtfs, results='hide'}
