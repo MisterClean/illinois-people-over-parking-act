@@ -27,6 +27,7 @@ cta_data <- read_normalize_gtfs("cta", cta_dir)
 - Fallback to cached data if download fails
 - Unique ID prefixing (e.g., `cta_1234`, `pace_5678`) to prevent collisions
 - Handles integer64 and missing field issues across agencies
+- Reads both `calendar.txt` and `calendar_dates.txt` to support different GTFS scheduling approaches
 
 ---
 
@@ -196,7 +197,8 @@ hubs <- qualified[qualifies_hub == TRUE]
 - `identify_all_rail_stations()` - Combines all agencies
 
 **Bus Trip Filtering**:
-- `identify_weekday_services()` - Filters to Mon-Fri service_ids
+- `identify_weekday_services()` - Filters to Mon-Fri service_ids (supports both calendar.txt and calendar_dates.txt)
+- `identify_weekday_services_from_dates()` - Identifies weekday services from calendar_dates.txt for agencies like CUMTD
 - `identify_bus_routes()` - Extracts bus routes (route_type = 3)
 - `get_weekday_bus_trips()` - Combines filters for weekday bus trips
 
@@ -212,8 +214,8 @@ source("R/hub_identification.R")
 rail_stations <- identify_all_rail_stations(all_stops, all_routes, all_stop_times)
 rail_stations[, .N, by = agency]
 
-# Get weekday bus trips
-weekday_svc <- identify_weekday_services(all_calendar)
+# Get weekday bus trips (supports both calendar approaches)
+weekday_svc <- identify_weekday_services(all_calendar, all_calendar_dates)
 bus_routes <- identify_bus_routes(all_routes)
 bus_trips <- get_weekday_bus_trips(all_trips, weekday_svc, bus_routes)
 
@@ -225,7 +227,8 @@ group_cols <- determine_grouping_cols(bus_trips, c("cluster_id", "agency"))
 - **CTA**: Uses GTFS parent_station hierarchy + location_type
 - **Metra**: All stops are rail; filters latitude ≤42.5°N (IL/WI border)
 - **Metro STL**: Identifies MetroLink (route_type=2) vs MetroBus (route_type=3)
-- **CUMTD/Pace**: Bus-only agencies, no rail identification needed
+- **CUMTD**: Bus-only agency; uses calendar_dates.txt exclusively for service definition (university schedule complexity)
+- **Pace**: Bus-only agency, no rail identification needed
 
 ---
 

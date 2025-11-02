@@ -332,6 +332,17 @@ Interactive Leaflet Map (HTML)
   - Metro STL: https://metrostlouis.org/
   - CUMTD: http://developer.cumtd.com/
 
+TODO:
+-- Rockford Mass Transit District (RMTD) https://dfef8f.p3cdn2.secureserver.net/wp-content/uploads/2023/08/RMTD_GTFS_AUGUST_2023.zip
+-- Metro Rock Island County Metropolitan Mass Transit District (MetroLINK) https://www.metroqc.com/documentcenter/view/404
+-- Greater Peoria Mass Transit (CityLink) https://clk.rideralerts.com/InfoPoint/gtfs-zip.ashx
+-- Sangamon Mass Transit District (SMTD) http://data.smtd.org/gtfs/smtd_gtfs_feed.zip
+-- DeKalb Public Transit https://data.trilliumtransit.com/gtfs/cityofdekalb-il-us/cityofdekalb-il-us.zip
+-- Bloomington Connect Transit https://rideconnecttransit.com/gtfs
+-- Decatur Public Transit System (DPTS) https://gtfs.remix.com/dpts_decatur_il_us.zip
+-- Galesburg Transit https://gis.ci.galesburg.il.us/cityofgalesburg-il-us.zip
+-- Macomb McDonough County Public Transportation (Go West Transit) https://api.transloc.com/gtfs/wiu.zip
+
 - **Geographic Boundaries**: Illinois state boundaries via US Census TIGER/Line
 - **Street Network**: Road centerlines via TIGER/Line for accurate distance calculations
 

@@ -144,6 +144,7 @@ for (data in list(cta_data, pace_data, metra_data, metro_stl_data, cumtd_data)) 
   data$trips <- convert_integer64(data$trips)
   data$stop_times <- convert_integer64(data$stop_times)
   data$calendar <- convert_integer64(data$calendar)
+  data$calendar_dates <- convert_integer64(data$calendar_dates)
 }
 
 all_stops <- rbindlist(list(cta_data$stops, pace_data$stops, metra_data$stops, metro_stl_data$stops, cumtd_data$stops), fill = TRUE, use.names = TRUE)
@@ -180,6 +181,34 @@ for (data in list(cta_data, pace_data, metra_data, metro_stl_data, cumtd_data)) 
 }
 
 all_calendar <- rbindlist(list(cta_data$calendar, pace_data$calendar, metra_data$calendar, metro_stl_data$calendar, cumtd_data$calendar), fill = TRUE, use.names = TRUE)
+
+# Combine calendar_dates from all agencies (important for agencies like CUMTD)
+# Some agencies use calendar_dates.txt exclusively to define service
+standard_calendar_dates_cols <- c("service_id", "date", "exception_type", "agency")
+
+for (data in list(cta_data, pace_data, metra_data, metro_stl_data, cumtd_data)) {
+  # Convert date column to character to avoid integer64 issues
+  if ("date" %in% names(data$calendar_dates)) {
+    data$calendar_dates[, date := as.character(date)]
+  }
+
+  # Ensure all expected columns exist
+  for (col in standard_calendar_dates_cols) {
+    if (!col %in% names(data$calendar_dates)) {
+      if (col == "exception_type") {
+        data$calendar_dates[, (col) := as.integer(NA)]
+      } else {
+        data$calendar_dates[, (col) := as.character(NA)]
+      }
+    }
+  }
+
+  # Reorder columns to standard order
+  existing_cols <- intersect(standard_calendar_dates_cols, names(data$calendar_dates))
+  setcolorder(data$calendar_dates, existing_cols)
+}
+
+all_calendar_dates <- rbindlist(list(cta_data$calendar_dates, pace_data$calendar_dates, metra_data$calendar_dates, metro_stl_data$calendar_dates, cumtd_data$calendar_dates), fill = TRUE, use.names = TRUE)
 
 # Clean up stop times that are > 24:00:00
 all_stop_times[, arrival_time := fifelse(substr(arrival_time, 1, 2) >= "24", 
@@ -447,11 +476,9 @@ rail_stops[, type := "rail"]
 
 # --- Hub Definition (iii): Bus Intersections (UPDATED) ---
 
-# Identify weekday services
-weekday_service <- all_calendar[
-  monday == 1 & tuesday == 1 & wednesday == 1 & thursday == 1 & friday == 1,
-  .(service_id, agency)
-]
+# Identify weekday services (supports both calendar.txt and calendar_dates.txt)
+# This is critical for agencies like CUMTD that use calendar_dates.txt exclusively
+weekday_service <- identify_weekday_services(all_calendar, all_calendar_dates)
 
 # Identify all weekday bus trips (with direction_id if available)
 bus_routes <- all_routes[route_type == 3, .(unique_route_id, agency)]

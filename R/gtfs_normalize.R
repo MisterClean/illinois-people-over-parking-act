@@ -9,20 +9,21 @@
 #' @param agency_dir Character. Path to directory containing extracted GTFS files
 #'   (typically returned from \code{\link{download_and_extract_gtfs}})
 #'
-#' @return Named list with 5 data.table elements:
+#' @return Named list with 6 data.table elements:
 #'   \describe{
 #'     \item{stops}{Stop locations with unique_stop_id}
 #'     \item{routes}{Route definitions with unique_route_id}
 #'     \item{trips}{Trip schedules with unique_trip_id and unique_route_id}
 #'     \item{stop_times}{Stop time sequences with unique_trip_id and unique_stop_id}
 #'     \item{calendar}{Service calendars with agency field}
+#'     \item{calendar_dates}{Service calendar exceptions/additions with agency field}
 #'   }
 #'
 #' @details
 #' This function normalizes GTFS data across agencies by:
 #' \enumerate{
-#'   \item Reading the 5 core GTFS files: stops.txt, routes.txt, trips.txt,
-#'     stop_times.txt, calendar.txt
+#'   \item Reading the core GTFS files: stops.txt, routes.txt, trips.txt,
+#'     stop_times.txt, calendar.txt, and calendar_dates.txt (if present)
 #'   \item Adding \code{agency} field to all tables
 #'   \item Creating unique identifiers by prefixing original IDs with agency name:
 #'     \itemize{
@@ -198,11 +199,30 @@ read_normalize_gtfs <- function(agency_name, agency_dir) {
     )
   }
 
+  # Read calendar_dates data (optional but important for some agencies like CUMTD)
+  calendar_dates_file <- file.path(agency_dir, "calendar_dates.txt")
+  if (file.exists(calendar_dates_file)) {
+    calendar_dates <- data.table::fread(calendar_dates_file)
+    calendar_dates[, agency := agency_name]
+    # Convert date column to character to avoid integer64 issues
+    if ("date" %in% names(calendar_dates)) {
+      calendar_dates[, date := as.character(date)]
+    }
+  } else {
+    calendar_dates <- data.table::data.table(
+      service_id = character(),
+      date = character(),
+      exception_type = integer(),
+      agency = character()
+    )
+  }
+
   return(list(
     stops = stops,
     routes = routes,
     trips = trips,
     stop_times = stop_times,
-    calendar = calendar
+    calendar = calendar,
+    calendar_dates = calendar_dates
   ))
 }

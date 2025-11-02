@@ -78,10 +78,10 @@ See [R/README.md](R/README.md) for detailed module documentation.
 ```
 GTFS Data (5 agencies: CTA, Pace, Metra, Metro STL, CUMTD)
     ↓ download_and_extract_gtfs() [R/gtfs_download.R]
-    ↓ read_normalize_gtfs() [R/gtfs_normalize.R]
+    ↓ read_normalize_gtfs() [R/gtfs_normalize.R] - reads calendar.txt + calendar_dates.txt
     ↓ ✓ VALIDATION: validate_all_gtfs() [R/gtfs_validate.R]
-Combined GTFS tables (stops, routes, trips, stop_times, calendar)
-    ↓ identify_weekday_services() [R/hub_identification.R]
+Combined GTFS tables (stops, routes, trips, stop_times, calendar, calendar_dates)
+    ↓ identify_weekday_services() [R/hub_identification.R] - supports both calendar approaches
     ↓ identify_bus_routes() [R/hub_identification.R]
     ↓ filter_peak_period_stop_times() [R/frequency_calc.R]
     ↓ Split analysis by AM/PM peaks (7-9am, 4-6pm)

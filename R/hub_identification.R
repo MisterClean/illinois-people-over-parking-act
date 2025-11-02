@@ -161,27 +161,156 @@ identify_all_rail_stations <- function(stops_dt, routes_dt, stop_times_dt) {
   return(rail_stops)
 }
 
-#' Identify Weekday Service IDs
+#' Identify Weekday Service IDs from calendar_dates.txt
 #'
-#' Filters calendar data to find service_ids that operate Monday-Friday.
+#' For agencies using calendar_dates-only approach (like CUMTD), identifies
+#' weekday services by analyzing actual service dates.
 #'
-#' @param calendar_dt data.table with columns: service_id, agency, monday,
-#'   tuesday, wednesday, thursday, friday
+#' @param calendar_dates_dt data.table with columns: service_id, agency, date,
+#'   exception_type
+#' @param min_weekday_ratio Numeric. Minimum proportion of dates that must be
+#'   weekdays for a service to qualify (default: 0.8)
+#' @param sample_size Integer. Number of dates to sample per service_id for
+#'   efficiency (default: 30). Set to Inf to check all dates.
 #'
 #' @return data.table with columns: service_id, agency
 #'
 #' @details
-#' Returns service_ids where all weekdays (Mon-Fri) have value 1, indicating
-#' service operates all weekdays.
+#' Some agencies (especially university transit like CUMTD) define all service
+#' dates in calendar_dates.txt with exception_type=1 ("service added"), while
+#' calendar.txt contains only placeholder zeros.
+#'
+#' This function:
+#' \enumerate{
+#'   \item Filters to exception_type=1 (service operates on this date)
+#'   \item Filters to agencies with no valid calendar.txt entries
+#'   \item For each service_id, samples dates and checks day-of-week
+#'   \item Returns service_ids where >= min_weekday_ratio of dates are weekdays
+#' }
+#'
+#' A service qualifies as "weekday" if at least 80% (default) of its sampled
+#' dates fall on Monday-Friday. This tolerates occasional weekend service dates
+#' while correctly identifying primarily weekday services.
+#'
+#' @examples
+#' \dontrun{
+#' # For CUMTD-like agencies
+#' weekday_services <- identify_weekday_services_from_dates(all_calendar_dates)
+#' }
+#'
+#' @export
+identify_weekday_services_from_dates <- function(calendar_dates_dt,
+                                                   min_weekday_ratio = 0.8,
+                                                   sample_size = 30) {
+  # Only process dates where service is added (exception_type = 1)
+  service_dates <- calendar_dates_dt[exception_type == 1]
+
+  # Convert date strings (YYYYMMDD) to Date objects
+  service_dates[, date_obj := as.Date(date, format = "%Y%m%d")]
+
+  # Calculate day of week (1=Monday, 7=Sunday)
+  # Use lubridate::wday with week_start=1 so Monday=1, Sunday=7
+  service_dates[, weekday := lubridate::wday(date_obj, week_start = 1)]
+
+  # Mark weekdays (1-5 = Monday-Friday)
+  service_dates[, is_weekday := weekday >= 1 & weekday <= 5]
+
+  # For each service_id + agency, sample dates and calculate weekday ratio
+  weekday_analysis <- service_dates[,
+    {
+      # Sample dates for efficiency
+      n_dates <- .N
+      if (n_dates > sample_size && sample_size < Inf) {
+        sampled_idx <- sample(.N, min(sample_size, .N))
+        weekday_count <- sum(is_weekday[sampled_idx])
+        total_count <- length(sampled_idx)
+      } else {
+        weekday_count <- sum(is_weekday)
+        total_count <- .N
+      }
+
+      .(
+        weekday_ratio = weekday_count / total_count,
+        n_dates_checked = total_count,
+        n_total_dates = n_dates
+      )
+    },
+    by = .(service_id, agency)
+  ]
+
+  # Filter to services with high weekday ratio
+  weekday_services <- weekday_analysis[
+    weekday_ratio >= min_weekday_ratio,
+    .(service_id, agency)
+  ]
+
+  return(weekday_services)
+}
+
+#' Identify Weekday Service IDs
+#'
+#' Filters calendar data to find service_ids that operate Monday-Friday.
+#' Supports both calendar.txt and calendar_dates.txt approaches.
+#'
+#' @param calendar_dt data.table with columns: service_id, agency, monday,
+#'   tuesday, wednesday, thursday, friday
+#' @param calendar_dates_dt Optional data.table with columns: service_id, agency,
+#'   date, exception_type. If provided, used to identify weekday services for
+#'   agencies using calendar_dates-only approach.
+#'
+#' @return data.table with columns: service_id, agency
+#'
+#' @details
+#' Returns service_ids where all weekdays (Mon-Fri) have value 1 in calendar.txt,
+#' indicating service operates all weekdays.
+#'
+#' If calendar_dates_dt is provided, also identifies weekday services from
+#' agencies that use calendar_dates.txt exclusively (where calendar.txt has all zeros).
 #'
 #' This is used to filter trips to weekday peak periods for hub/corridor analysis.
 #'
+#' @examples
+#' \dontrun{
+#' # Basic usage with calendar.txt only
+#' weekday_services <- identify_weekday_services(all_calendar)
+#'
+#' # With calendar_dates.txt support (recommended)
+#' weekday_services <- identify_weekday_services(all_calendar, all_calendar_dates)
+#' }
+#'
 #' @export
-identify_weekday_services <- function(calendar_dt) {
-  calendar_dt[
+identify_weekday_services <- function(calendar_dt, calendar_dates_dt = NULL) {
+  # Get weekday services from calendar.txt
+  weekday_from_calendar <- calendar_dt[
     monday == 1 & tuesday == 1 & wednesday == 1 & thursday == 1 & friday == 1,
     .(service_id, agency)
   ]
+
+  # If calendar_dates provided, supplement with date-based detection
+  if (!is.null(calendar_dates_dt) && nrow(calendar_dates_dt) > 0) {
+    # Identify which agencies have no valid calendar.txt entries
+    agencies_with_calendar <- unique(weekday_from_calendar$agency)
+    agencies_needing_dates <- unique(calendar_dates_dt$agency)
+    agencies_calendar_only <- setdiff(agencies_needing_dates, agencies_with_calendar)
+
+    if (length(agencies_calendar_only) > 0) {
+      # Get weekday services from calendar_dates.txt for these agencies
+      calendar_dates_subset <- calendar_dates_dt[agency %in% agencies_calendar_only]
+      weekday_from_dates <- identify_weekday_services_from_dates(calendar_dates_subset)
+
+      # Combine both sources
+      weekday_services <- unique(rbindlist(
+        list(weekday_from_calendar, weekday_from_dates),
+        fill = TRUE
+      ))
+    } else {
+      weekday_services <- weekday_from_calendar
+    }
+  } else {
+    weekday_services <- weekday_from_calendar
+  }
+
+  return(weekday_services)
 }
 
 #' Identify Bus Routes

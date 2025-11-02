@@ -49,7 +49,32 @@ Based on these findings, the following normalization strategy was implemented:
   - trip_id, service_id
   - arrival_time, departure_time
 
-### 4. Transit Hub Identification
+### 4. Calendar and Service Date Handling
+
+GTFS feeds use two approaches to define service schedules:
+
+**Approach 1: calendar.txt-based (CTA, Pace, Metra, Metro STL)**
+- `calendar.txt`: Defines regular recurring schedules with 1s/0s for days of week
+- `calendar_dates.txt`: Defines exceptions (holidays removed, special days added)
+
+**Approach 2: calendar_dates.txt-only (CUMTD)**
+- `calendar.txt`: Contains placeholder entries with all zeros (required by GTFS spec but not used)
+- `calendar_dates.txt`: Defines ALL service dates explicitly with exception_type=1 ("service added")
+
+**Why CUMTD Uses This Approach:**
+- University transit systems have complex, non-repeating schedules
+- Academic calendar variations (terms, breaks, exams, special events)
+- More flexible than pattern-based calendar definitions
+
+**Implementation:**
+- The normalization reads both `calendar.txt` and `calendar_dates.txt` from all agencies
+- Weekday service identification supports both approaches:
+  1. For agencies with valid calendar.txt entries: Use monday=1 through friday=1 filter
+  2. For agencies using calendar_dates.txt exclusively: Sample service dates and verify they're weekdays
+  3. Combine results from both methods to get complete weekday service coverage
+- This ensures agencies like CUMTD are properly included in the analysis
+
+### 5. Transit Hub Identification
 - **Rail Stations**:
   - CTA: Identified using parent_station or location_type = 1
   - Metra: All stops are considered rail stations (route_type = 2), but filtered to include only Illinois stations (latitude ≤ 42.5°)
@@ -58,12 +83,12 @@ Based on these findings, the following normalization strategy was implemented:
   - Identified stops with 2+ routes during peak hours
   - Applied to both CTA and Pace bus stops
 
-### 5. Combined Processing
+### 6. Combined Processing
 - Merged all normalized data into unified tables
 - Processed the combined data to identify all qualifying transit hubs
 - Created buffers around all hubs to visualize affected areas
 
-### 6. Visualization Enhancements
+### 7. Visualization Enhancements
 - Added agency-specific coloring to distinguish between transit providers
 - Included agency information in popups for each transit hub
 - Added a legend showing the distribution of hubs by agency
