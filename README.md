@@ -6,21 +6,15 @@ The project combines GTFS transit data from 14 agencies across Illinois with adv
 
 ## What is SB2111?
 
-Senate Bill 2111 prohibits municipalities in Illinois from enforcing parking minimums in two types of transit-accessible areas:
+According to the updated bill [10400SB2111ham003](https://www.ilga.gov/documents/legislation/104/SB/PDF/10400SB2111ham003.pdf), minimum parking requirements are prohibited for development projects located within:
 
-1. **Transit Hubs**: Within 1/2 mile of transit stations/stops where:
-   - **3+ fixed-route transit lines intersect**
-   - Service operates **at least every 15 minutes** during peak periods (either AM or PM)
+- **1/2 mile of public transportation hubs**, defined as:
+  - (i) A rail transit station
+  - (ii) A boat or ferry terminal served by either a bus connection stop or rail transit station
+  - (iii) An intersection of 2 or more bus routes with a **combined frequency** of service interval of 15 minutes or less during peak commute periods
 
-2. **Transit Corridors**: Within 1/8 mile of transit routes where:
-   - **1+ transit routes operate**
-   - Service operates **at least every 15 minutes** during peak periods (either AM or PM)
-
-**Peak Periods** are defined as:
-- **AM Peak**: 7:00 AM - 9:00 AM (120 minutes)
-- **PM Peak**: 4:00 PM - 6:00 PM (120 minutes)
-
-**"Either" Logic**: Areas qualify if criteria are met in **either** AM **or** PM peak (not necessarily both). This captures directional flow patterns (e.g., heavy inbound service AM, heavy outbound service PM).
+- **1/8 mile of public transportation corridors**, defined as:
+  - A street on which there is **one or more bus routes** with a **combined frequency** of bus service interval of 15 minutes or less during the morning and afternoon peak commute periods
 
 ---
 
