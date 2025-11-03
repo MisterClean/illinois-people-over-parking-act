@@ -13,17 +13,14 @@
 #' Get Agency Color Palette
 #'
 #' Returns the standardized color palette for transit agencies.
+#' Now pulls colors from centralized agency metadata.
 #'
-#' @return Named vector of colors for each agency
+#' @return Named vector of colors where names are display names and values are hex colors
 get_agency_color_palette <- function() {
-  c(
-    CTA = "#009CDE",       # Blue
-    Pace = "#814C9E",      # Purple
-    Metra = "#E31837",     # Red
-    "Metro STL" = "#00A651", # Green
-    MTD = "#FF6600",       # Orange (CUMTD)
-    RMTD = "#FFD700"       # Gold (Rockford)
-  )
+  metadata <- get_agency_metadata()
+  colors <- sapply(metadata, function(x) x$color)
+  names(colors) <- sapply(metadata, function(x) x$name)
+  return(colors)
 }
 
 #' Create Hub Popup HTML
@@ -73,16 +70,11 @@ create_hub_popup_html <- function(hub_sf) {
 #' Create Interactive Map
 #'
 #' Creates a Leaflet map showing transit hubs, corridors, and affected areas.
-#' Includes layer controls for toggling different agency buffers and features.
+#' Dynamically handles all agencies via metadata. Includes layer controls.
 #'
 #' @param all_hubs_sf sf object with all transit hubs
 #' @param all_affected_areas sf object with combined affected areas
-#' @param cta_hubs_union sf object with CTA hub buffers
-#' @param pace_hubs_union sf object with Pace hub buffers
-#' @param metra_hubs_union sf object with Metra hub buffers
-#' @param metro_stl_hubs_union sf object with Metro STL hub buffers
-#' @param cumtd_hubs_union sf object with CUMTD hub buffers
-#' @param rmtd_hubs_union sf object with RMTD hub buffers
+#' @param hub_buffers List from create_hub_buffers() with per_agency_union field
 #' @param all_corridors_union sf object with corridor buffers
 #' @param center_lng Longitude for map center (default: Chicago -87.6079)
 #' @param center_lat Latitude for map center (default: Chicago 41.8917)
@@ -91,22 +83,17 @@ create_hub_popup_html <- function(hub_sf) {
 #'
 #' @examples
 #' \dontrun{
+#' hub_buffers <- create_hub_buffers(all_hubs_sf, illinois_boundary)
 #' map <- create_interactive_map(
 #'   all_hubs_sf,
 #'   all_affected_areas_combined,
-#'   cta_hubs_union, pace_hubs_union, metra_hubs_union,
-#'   metro_stl_hubs_union, cumtd_hubs_union, rmtd_hubs_union,
+#'   hub_buffers,
 #'   all_corridors_union_wgs84
 #' )
 #' }
 create_interactive_map <- function(all_hubs_sf,
                                    all_affected_areas,
-                                   cta_hubs_union,
-                                   pace_hubs_union,
-                                   metra_hubs_union,
-                                   metro_stl_hubs_union,
-                                   cumtd_hubs_union,
-                                   rmtd_hubs_union,
+                                   hub_buffers,
                                    all_corridors_union,
                                    center_lng = -87.6079,
                                    center_lat = 41.8917,
@@ -120,7 +107,7 @@ create_interactive_map <- function(all_hubs_sf,
     domain = all_hubs_sf$agency_name
   )
 
-  # Create the interactive map
+  # Create base map
   map <- leaflet() %>%
     setView(lng = center_lng, lat = center_lat, zoom = zoom) %>%
     addProviderTiles(providers$CartoDB.Positron) %>%
@@ -134,64 +121,39 @@ create_interactive_map <- function(all_hubs_sf,
       color = "purple",
       opacity = 0.7,
       group = "All Affected Areas (Hubs + Corridors)"
-    ) %>%
+    )
 
-    # Hub areas by agency
-    addPolygons(
-      data = cta_hubs_union,
-      fillColor = agency_colors["CTA"],
-      fillOpacity = 0.4,
-      weight = 1,
-      color = agency_colors["CTA"],
-      opacity = 0.8,
-      group = "CTA Hubs (1/2 mile)"
-    ) %>%
-    addPolygons(
-      data = pace_hubs_union,
-      fillColor = agency_colors["Pace"],
-      fillOpacity = 0.4,
-      weight = 1,
-      color = agency_colors["Pace"],
-      opacity = 0.8,
-      group = "Pace Hubs (1/2 mile)"
-    ) %>%
-    addPolygons(
-      data = metra_hubs_union,
-      fillColor = agency_colors["Metra"],
-      fillOpacity = 0.4,
-      weight = 1,
-      color = agency_colors["Metra"],
-      opacity = 0.8,
-      group = "Metra Hubs (1/2 mile)"
-    ) %>%
-    addPolygons(
-      data = metro_stl_hubs_union,
-      fillColor = agency_colors["Metro STL"],
-      fillOpacity = 0.4,
-      weight = 1,
-      color = agency_colors["Metro STL"],
-      opacity = 0.8,
-      group = "Metro STL Hubs (1/2 mile)"
-    ) %>%
-    addPolygons(
-      data = cumtd_hubs_union,
-      fillColor = agency_colors["MTD"],
-      fillOpacity = 0.4,
-      weight = 1,
-      color = agency_colors["MTD"],
-      opacity = 0.8,
-      group = "MTD Hubs (1/2 mile)"
-    ) %>%
-    addPolygons(
-      data = rmtd_hubs_union,
-      fillColor = agency_colors["RMTD"],
-      fillOpacity = 0.4,
-      weight = 1,
-      color = agency_colors["RMTD"],
-      opacity = 0.8,
-      group = "RMTD Hubs (1/2 mile)"
-    ) %>%
+  # Dynamically add hub buffer layers for each agency
+  cat("Adding agency hub buffer layers...\n")
+  per_agency_union <- hub_buffers$per_agency_union
 
+  agency_hub_groups <- c()  # Track group names for layer control
+
+  for (agency_id in names(per_agency_union)) {
+    agency_buffer <- per_agency_union[[agency_id]]
+    agency_name <- get_agency_display_name(agency_id)
+    agency_color <- get_agency_color(agency_id)
+    group_name <- paste0(agency_name, " Hubs (1/2 mile)")
+
+    # Only add layer if buffer has data
+    if (length(agency_buffer) > 0 && !is.null(agency_buffer)) {
+      map <- map %>%
+        addPolygons(
+          data = agency_buffer,
+          fillColor = agency_color,
+          fillOpacity = 0.4,
+          weight = 1,
+          color = agency_color,
+          opacity = 0.8,
+          group = group_name
+        )
+
+      agency_hub_groups <- c(agency_hub_groups, group_name)
+    }
+  }
+
+  # Add corridor and hub points layers
+  map <- map %>%
     # Corridor areas (combined)
     addPolygons(
       data = all_corridors_union,
@@ -243,33 +205,33 @@ create_interactive_map <- function(all_hubs_sf,
           ""
         )
       )
-    ) %>%
+    )
 
-    # Layer controls
+  # Build overlay groups list dynamically
+  overlay_groups <- c(
+    "All Affected Areas (Hubs + Corridors)",
+    agency_hub_groups,
+    "All Corridors (1/8 mile)",
+    "Transit Hub Points"
+  )
+
+  # Build legend colors and labels dynamically
+  legend_colors <- c("purple", agency_colors[sapply(names(per_agency_union), get_agency_display_name)], "#FF8C00")
+  legend_labels <- c("All Affected Areas",
+                     paste0(sapply(names(per_agency_union), get_agency_display_name), " Hubs"),
+                     "All Corridors (dashed)")
+
+  # Add layer controls
+  map <- map %>%
     addLayersControl(
       baseGroups = c("CartoDB.Positron"),
-      overlayGroups = c(
-        "All Affected Areas (Hubs + Corridors)",
-        "CTA Hubs (1/2 mile)",
-        "Pace Hubs (1/2 mile)",
-        "Metra Hubs (1/2 mile)",
-        "Metro STL Hubs (1/2 mile)",
-        "MTD Hubs (1/2 mile)",
-        "RMTD Hubs (1/2 mile)",
-        "All Corridors (1/8 mile)",
-        "Transit Hub Points"
-      ),
+      overlayGroups = overlay_groups,
       options = layersControlOptions(collapsed = FALSE)
     ) %>%
 
     # Hide individual layers by default, show only combined
     hideGroup(c(
-      "CTA Hubs (1/2 mile)",
-      "Pace Hubs (1/2 mile)",
-      "Metra Hubs (1/2 mile)",
-      "Metro STL Hubs (1/2 mile)",
-      "MTD Hubs (1/2 mile)",
-      "RMTD Hubs (1/2 mile)",
+      agency_hub_groups,
       "All Corridors (1/8 mile)",
       "Transit Hub Points"
     )) %>%
@@ -277,17 +239,8 @@ create_interactive_map <- function(all_hubs_sf,
     # Add legend
     addLegend(
       position = "bottomright",
-      colors = c("purple", agency_colors["CTA"], agency_colors["Pace"],
-                 agency_colors["Metra"], agency_colors["Metro STL"],
-                 agency_colors["MTD"], agency_colors["RMTD"], "#FF8C00"),
-      labels = c("All Affected Areas",
-                 "CTA Hubs",
-                 "Pace Hubs",
-                 "Metra Hubs",
-                 "Metro STL Hubs",
-                 "MTD Hubs",
-                 "RMTD Hubs",
-                 "All Corridors (dashed)"),
+      colors = legend_colors,
+      labels = legend_labels,
       opacity = 0.7
     ) %>%
 

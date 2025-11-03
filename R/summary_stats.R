@@ -95,6 +95,21 @@ generate_summary_statistics <- function(all_hubs_sf, qualifying_corridor_stops_s
     }
   }
 
+  # Build dynamic by_agency structure for all agencies
+  by_agency <- list()
+  all_agency_ids <- get_all_agency_ids()
+
+  for (agency_id in all_agency_ids) {
+    by_agency[[agency_id]] <- list(
+      hub = get_agency_stats(bus_hub_summary, agency_id),
+      corridor = get_agency_stats(corridor_summary, agency_id)
+    )
+  }
+
+  # Count rail hubs by agency
+  rail_hub_counts <- table(rail_stops$agency)
+
+  # Legacy individual agency stats (for backward compatibility)
   cta_hub <- get_agency_stats(bus_hub_summary, "cta")
   pace_hub <- get_agency_stats(bus_hub_summary, "pace")
   metro_stl_hub <- get_agency_stats(bus_hub_summary, "metro_stl")
@@ -107,16 +122,23 @@ generate_summary_statistics <- function(all_hubs_sf, qualifying_corridor_stops_s
   cumtd_corridor <- get_agency_stats(corridor_summary, "cumtd")
   rmtd_corridor <- get_agency_stats(corridor_summary, "rmtd")
 
-  # Count rail hubs by agency
-  rail_hub_counts <- table(rail_stops$agency)
-
   cat("Summary statistics generated successfully\n")
 
   return(list(
+    # Core summaries
     bus_hub_summary = bus_hub_summary,
     corridor_summary = corridor_summary,
     rail_hub_count = rail_hub_count,
     total_hubs = total_hubs,
+    rail_hub_counts = rail_hub_counts,
+    qualifying_bus_hubs = qualifying_bus_hubs,
+    rail_stops = rail_stops,
+    qualifying_corridor_stops = qualifying_corridor_stops,
+
+    # NEW: Dynamic by_agency structure
+    by_agency = by_agency,
+
+    # Legacy individual agency stats (backward compatibility)
     cta_hub = cta_hub,
     pace_hub = pace_hub,
     metro_stl_hub = metro_stl_hub,
@@ -126,10 +148,6 @@ generate_summary_statistics <- function(all_hubs_sf, qualifying_corridor_stops_s
     pace_corridor = pace_corridor,
     metro_stl_corridor = metro_stl_corridor,
     cumtd_corridor = cumtd_corridor,
-    rmtd_corridor = rmtd_corridor,
-    rail_hub_counts = rail_hub_counts,
-    qualifying_bus_hubs = qualifying_bus_hubs,
-    rail_stops = rail_stops,
-    qualifying_corridor_stops = qualifying_corridor_stops
+    rmtd_corridor = rmtd_corridor
   ))
 }

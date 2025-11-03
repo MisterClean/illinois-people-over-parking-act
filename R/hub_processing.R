@@ -498,12 +498,15 @@ identify_all_hubs <- function(all_stops, all_routes, all_trips,
   # Create spatial object
   all_hubs_sf <- st_as_sf(all_hubs, coords = c("stop_lon", "stop_lat"), crs = 4326)
 
-  # Add agency labels
-  all_hubs_sf$agency_name <- factor(
-    all_hubs_sf$agency,
-    levels = c("cta", "pace", "metra", "metro_stl", "cumtd", "rmtd"),
-    labels = c("CTA", "Pace", "Metra", "Metro STL", "MTD", "RMTD")
-  )
+  # Add agency labels dynamically from metadata
+  # Get unique agencies present in the data
+  unique_agencies_in_data <- unique(all_hubs_sf$agency)
+
+  # Create mapping from agency ID to display name
+  agency_id_to_name <- sapply(unique_agencies_in_data, get_agency_display_name)
+
+  # Apply labels (use direct assignment since factor levels may not cover all new agencies)
+  all_hubs_sf$agency_name <- agency_id_to_name[all_hubs_sf$agency]
 
   cat(sprintf("\n=== Hub Identification Complete ===\n"))
   cat(sprintf("Total hubs: %d (Rail: %d, Bus: %d)\n",

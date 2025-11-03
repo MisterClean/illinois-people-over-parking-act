@@ -75,6 +75,7 @@ illinois_boundary <- states(cb = TRUE, year = 2023) %>%
 # We'll reuse the hub identification logic from the original script
 
 # Load GTFS utility functions from extracted modules
+source("R/agency_metadata.R")  # Centralized agency configuration
 source("R/gtfs_download.R")
 source("R/gtfs_normalize.R")
 source("R/gtfs_validate.R")
@@ -93,15 +94,9 @@ source("R/summary_stats.R")
 ```{r download_gtfs, results='hide'}
 ## Download and Process GTFS Data
 
-# Define agency configurations
-agency_configs <- list(
-  list(name = "cta", url = "https://www.transitchicago.com/downloads/sch_data/google_transit.zip"),
-  list(name = "pace", url = "https://www.pacebus.com/sites/default/files/2025-02/GTFS.zip"),
-  list(name = "metra", url = "https://schedules.metrarail.com/gtfs/schedule.zip"),
-  list(name = "metro_stl", url = "https://metrostlouis.org/Transit/google_transit.zip"),
-  list(name = "cumtd", url = "http://developer.cumtd.com/gtfs/google_transit.zip"),
-  list(name = "rmtd", url = "https://rmtd.org/rmtdgtfs/GTFS_FILES.zip")
-)
+# Get agency configurations from centralized metadata
+# Now includes all 14 Illinois transit agencies (6 existing + 8 new)
+agency_configs <- get_agency_configs_for_download()
 
 # Process all GTFS data: download, normalize, validate, and combine
 gtfs_data <- process_all_gtfs_data(agency_configs, validate = TRUE)
@@ -115,13 +110,23 @@ all_calendar <- gtfs_data$all_calendar
 all_calendar_dates <- gtfs_data$all_calendar_dates
 validation_results <- gtfs_data$validation_results
 
-# Keep individual agency data for direction exploration
+# Individual agency data available via gtfs_data$agency_data[[agency_id]]
+# Legacy assignments kept for backward compatibility:
 cta_data <- gtfs_data$agency_data$cta
 pace_data <- gtfs_data$agency_data$pace
 metra_data <- gtfs_data$agency_data$metra
 metro_stl_data <- gtfs_data$agency_data$metro_stl
 cumtd_data <- gtfs_data$agency_data$cumtd
 rmtd_data <- gtfs_data$agency_data$rmtd
+# New agencies (8):
+metrolink_quad_cities_data <- gtfs_data$agency_data$metrolink_quad_cities
+citylink_data <- gtfs_data$agency_data$citylink
+smtd_data <- gtfs_data$agency_data$smtd
+dekalb_data <- gtfs_data$agency_data$dekalb
+connect_transit_data <- gtfs_data$agency_data$connect_transit
+dpts_data <- gtfs_data$agency_data$dpts
+galesburg_data <- gtfs_data$agency_data$galesburg
+gowest_data <- gtfs_data$agency_data$gowest
 ```
 
 ```{r explore_direction_data, results='hide'}
@@ -130,24 +135,20 @@ rmtd_data <- gtfs_data$agency_data$rmtd
 # Check if direction_id exists in trips data
 cat("=== Checking direction_id availability ===\n\n")
 
-agencies <- c("cta", "pace", "metra", "metro_stl", "cumtd", "rmtd")
-for (agency in agencies) {
-  trips_data <- switch(agency,
-                      "cta" = cta_data$trips,
-                      "pace" = pace_data$trips,
-                      "metra" = metra_data$trips,
-                      "metro_stl" = metro_stl_data$trips,
-                      "cumtd" = cumtd_data$trips,
-                      "rmtd" = rmtd_data$trips)
+# Iterate over all agencies dynamically
+all_agency_ids <- get_all_agency_ids()
+for (agency_id in all_agency_ids) {
+  trips_data <- gtfs_data$agency_data[[agency_id]]$trips
+  agency_name <- get_agency_display_name(agency_id)
 
   if ("direction_id" %in% names(trips_data)) {
-    cat(sprintf("%s: Has direction_id field\n", toupper(agency)))
+    cat(sprintf("%s: Has direction_id field\n", agency_name))
     cat(sprintf("  - Total trips: %d\n", nrow(trips_data)))
     cat(sprintf("  - Trips with direction_id: %d\n", sum(!is.na(trips_data$direction_id))))
     cat(sprintf("  - Unique direction values: %s\n",
                 paste(sort(unique(trips_data$direction_id)), collapse = ", ")))
   } else {
-    cat(sprintf("%s: NO direction_id field\n", toupper(agency)))
+    cat(sprintf("%s: NO direction_id field\n", agency_name))
   }
   cat("\n")
 }
@@ -210,15 +211,19 @@ all_corridors_union_wgs84 <- create_corridor_buffers(
 # Create hub buffers (1/2 mile around hubs)
 hub_buffers <- create_hub_buffers(all_hubs_sf, illinois_boundary)
 
-# Extract hub buffer components for map and calculations
+# Extract hub buffer components for area calculations
 all_hub_areas_wgs84 <- hub_buffers$all_hub_areas
 half_mile_buffers_wgs84 <- hub_buffers$half_mile_buffers
+
+# Legacy hub unions (backward compatibility)
 cta_hubs_union <- hub_buffers$cta_hubs_union
 pace_hubs_union <- hub_buffers$pace_hubs_union
 metra_hubs_union <- hub_buffers$metra_hubs_union
 metro_stl_hubs_union <- hub_buffers$metro_stl_hubs_union
 cumtd_hubs_union <- hub_buffers$cumtd_hubs_union
 rmtd_hubs_union <- hub_buffers$rmtd_hubs_union
+
+# New agencies available via hub_buffers$per_agency_union[[agency_id]]
 
 # Combine all affected areas (hubs + corridors)
 all_affected_areas_combined <- create_combined_buffers(
@@ -263,16 +268,11 @@ qualifying_corridor_stop_count <- nrow(qualifying_corridor_stops_sf)
 ## Interactive Map: Areas Affected by the Updated People Over Parking Act
 
 ```{r create_map}
-# Create the interactive map
+# Create the interactive map (now with dynamic agency handling)
 map <- create_interactive_map(
   all_hubs_sf,
   all_affected_areas_combined,
-  cta_hubs_union,
-  pace_hubs_union,
-  metra_hubs_union,
-  metro_stl_hubs_union,
-  cumtd_hubs_union,
-  rmtd_hubs_union,
+  hub_buffers,  # Now accepts full buffer object
   all_corridors_union_wgs84,
   center_lng = -87.6079,
   center_lat = 41.8917,
