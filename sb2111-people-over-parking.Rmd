@@ -304,7 +304,7 @@ According to the updated bill [10400SB2111ham003](https://www.ilga.gov/documents
 - **1/8 mile of public transportation corridors**, defined as:
   - A street on which there is **one or more bus routes** with a **combined frequency** of bus service interval of 15 minutes or less during the morning and afternoon peak commute periods
 
-### Analysis Methodology
+### Methodology
 
 This analysis implements the following methodology to identify qualifying transit hubs and corridors:
 
@@ -325,7 +325,7 @@ This analysis implements the following methodology to identify qualifying transi
 - After clustering, we verify that routes actually overlap at the same physical intersection or street
 - Stop names (e.g., "Jackson & Lotus", "Oak Ave & Davis St") are parsed to extract street names
 - A cluster qualifies only if **2 or more routes share at least one common street name**
-- This ensures routes truly intersect at the location, not just have nearby stops within 150 feet
+- This helps ensure routes truly intersect at the location, not just have nearby stops within 150 feet
 - Example: Route A stops at "State & Madison", Route B stops at "State & Monroe" (both within 150ft) → they share "State" street → overlap verified
 
 **Combined Frequency Calculation:**
@@ -352,6 +352,19 @@ This analysis implements the following methodology to identify qualifying transi
 - Metro St. Louis transit system operates across the Illinois-Missouri border; only Illinois portions of hub/corridor buffers are included in the analysis
 - Metra serves some stations in Wisconsin (Kenosha County); these are excluded from the analysis (latitude filter at 42.5°)
 - Clipping is performed after buffer creation using the U.S. Census TIGER/Line state boundary for Illinois
+
+**Statutory Interpretation and Ambiguities:**
+
+Senate Bill 2111 contains three ambiguities that significantly affect which areas qualify for parking minimum relief. Depending on interpretation, **entire cities could be included or excluded from parking reform** under this legislation.
+
+**1. "Intersecting routes"**: The statute refers to "an intersection of 2 or more bus routes" but does not specify whether this means routes that physically cross each other at a road intersection, or whether it includes routes that overlap on the same street without crossing. **Our interpretation**: Routes must serve stops at the same street intersection (verified through spatial clustering within 150 feet combined with street name matching). Alternative interpretations counting parallel routes on the same street would dramatically expand qualifying areas.
+
+**2. "Combined frequency"**: The statute specifies "combined frequency of service interval" but does not define how frequencies from multiple routes should be combined. Should two routes with 30-minute headways be considered as 30-minute combined service, or 15-minute combined service? **Our interpretation**: We sum total trips across all qualifying routes during peak periods (e.g., two routes with 30-minute frequency = 4 trips/hour each = 8 trips/hour = 15-minute combined interval). Alternative interpretations using averaged frequencies or minimum headways would result in substantially fewer qualifying hubs.
+
+**3. Stop clustering and directionality**: The statute does not specify whether routes must share the exact same stop_id to qualify as "intersecting," or whether nearby stops serving the same intersection should be grouped together. It also does not address whether opposite-direction service should be counted separately or combined. **Our interpretation**: We cluster stops within 150 feet that serve the same street intersection, and when GTFS direction_id data is available, we analyze routes by direction to avoid double-counting bidirectional service. Alternative interpretations requiring exact stop_id matches would exclude many legitimate transit hubs where routes serve nearby stops at the same intersection.
+
+**Legal implications**: Municipalities and courts may interpret these provisions differently, leading to variation in the geographic extent of parking minimum relief across Illinois. This analysis represents one reasonable interpretation aligned with the statute's apparent intent to promote transit-oriented development in areas with genuine high-frequency transit service.
+
 
 **Data Sources:**
 
@@ -508,99 +521,3 @@ knitr::kable(
   ) %>%
   kableExtra::row_spec(nrow(agency_summary), bold = TRUE, background = "#f0f0f0")
 ```
-
-### Bus Transit Hubs
-
-**Methodology:** Stops clustered at 150 ft radius; qualifies if 2+ routes AND combined frequency ≤15 min in EITHER AM (7-9am) or PM (4-6pm) peak period.
-
-**CTA:**
-
-- Bus hub stops: **`r cta_hub$total_stops`** (in `r cta_hub$unique_clusters` clusters)
-
-**Pace:**
-
-- Bus hub stops: **`r pace_hub$total_stops`** (in `r pace_hub$unique_clusters` clusters)
-
-**Metro St. Louis:**
-
-- Bus hub stops: **`r if(nrow(metro_stl_hub) > 0) metro_stl_hub$total_stops else 0`** (in `r if(nrow(metro_stl_hub) > 0) metro_stl_hub$unique_clusters else 0` clusters)
-
-**Champaign-Urbana MTD:**
-
-- Bus hub stops: **`r if(nrow(cumtd_hub) > 0) cumtd_hub$total_stops else 0`** (in `r if(nrow(cumtd_hub) > 0) cumtd_hub$unique_clusters else 0` clusters)
-
-**Rockford MTD:**
-
-- Bus hub stops: **`r if(nrow(rmtd_hub) > 0) rmtd_hub$total_stops else 0`** (in `r if(nrow(rmtd_hub) > 0) rmtd_hub$unique_clusters else 0` clusters)
-
-### Transit Hub Breakdown
-
-**Total Transit Hubs:** `r formatC(total_hubs, format="d", big.mark=",")`
-
-**By Type:**
-- **Rail Hubs:** `r rail_hub_count`
-  - CTA: `r if("cta" %in% names(rail_hub_counts)) rail_hub_counts["cta"] else 0`
-  - Metra: `r if("metra" %in% names(rail_hub_counts)) rail_hub_counts["metra"] else 0`
-  - Metro STL: `r if("metro_stl" %in% names(rail_hub_counts)) rail_hub_counts["metro_stl"] else 0`
-- **Bus Hubs:** `r sum(bus_hub_summary$unique_clusters)`
-  - CTA: `r cta_hub$unique_clusters`
-  - Pace: `r pace_hub$unique_clusters`
-  - Metro STL: `r if(nrow(metro_stl_hub) > 0) metro_stl_hub$unique_clusters else 0`
-  - CUMTD: `r if(nrow(cumtd_hub) > 0) cumtd_hub$unique_clusters else 0`
-  - RMTD: `r if(nrow(rmtd_hub) > 0) rmtd_hub$unique_clusters else 0`
-
-### Bus Corridors
-
-**Methodology:** Individual stops (no clustering); qualifies if combined frequency ≤15 min in EITHER AM (7-9am) or PM (4-6pm) peak period.
-
-**CTA:**
-
-- Corridor stops: **`r formatC(cta_corridor$total_stops, format="d", big.mark=",")`**
-
-**Pace:**
-
-- Corridor stops: **`r formatC(pace_corridor$total_stops, format="d", big.mark=",")`**
-
-**Metro St. Louis:**
-
-- Corridor stops: **`r if(nrow(metro_stl_corridor) > 0) formatC(metro_stl_corridor$total_stops, format="d", big.mark=",") else "0"`**
-
-**Champaign-Urbana MTD:**
-
-- Corridor stops: **`r if(nrow(cumtd_corridor) > 0) formatC(cumtd_corridor$total_stops, format="d", big.mark=",") else "0"`**
-
-**Rockford MTD:**
-
-- Corridor stops: **`r if(nrow(rmtd_corridor) > 0) formatC(rmtd_corridor$total_stops, format="d", big.mark=",") else "0"`**
-
-### Geographic Coverage
-
-- **Hub buffer area (1/2 mile):** `r sprintf("%.1f", as.numeric(hub_area_sqmi))` sq mi (`r sprintf("%.2f%%", pct_hubs)` of total area)
-- **Corridor buffer area (1/8 mile):** `r sprintf("%.1f", as.numeric(corridor_area_sqmi))` sq mi (`r sprintf("%.2f%%", pct_corridors)` of total area)
-- **Combined affected area:** `r sprintf("%.1f", as.numeric(combined_area_sqmi))` sq mi (`r sprintf("%.2f%%", pct_combined)` of total area)
-- **Total Illinois area analyzed:**
-  - Chicago MSA (6 counties): `r sprintf("%.1f", chicago_il_msa_area_sqmi)` sq mi
-  - St. Louis MSA (3 IL counties): `r sprintf("%.1f", stlouis_il_msa_area_sqmi)` sq mi
-  - Champaign-Urbana (1 county): `r sprintf("%.1f", champaign_area_sqmi)` sq mi
-  - Rockford (1 county): `r sprintf("%.1f", rockford_area_sqmi)` sq mi
-  - **Total: `r sprintf("%.1f", total_il_area_sqmi)` sq mi**
-
-**Note**: Area calculations reflect only portions within Illinois state boundaries. Cross-border transit services (Metro St. Louis in Missouri, Metra in Wisconsin) are excluded through geographic clipping.
-
-## Notes on Updated Methodology
-
-This analysis implements the following improvements to align with SB 2111's statutory language:
-
-1. **Split AM/PM Peak Periods**: Service is analyzed separately for morning (7-9am) and afternoon (4-6pm) peak periods, then combined using "either" logic—a location qualifies if it meets the frequency threshold in **either** AM **or** PM.
-
-2. **Stop Clustering (Hubs Only)**: Bus stops within **150 feet** are clustered together to represent physical intersections. This prevents overcounting stops at the same intersection and better reflects the statutory concept of "an intersection of 2 or more bus routes."
-
-3. **Direction-Aware (if available)**: If `direction_id` is present in GTFS data, the analysis accounts for directionality (northbound vs southbound) when calculating service frequency.
-
-4. **Qualification Criteria**:
-   - **Bus Hubs**: Must have **2+ routes** AND **combined frequency ≤15 minutes** in at least one peak period
-   - **Bus Corridors**: Must have **1+ routes** AND **combined frequency ≤15 minutes** in at least one peak period
-
-5. **Transparent Metrics**: Each hub and corridor stop now includes diagnostic information showing AM/PM service levels, making it easy to verify which locations qualify and why.
-
-6. **Illinois Boundary Clipping**: All hub and corridor buffer areas are clipped to Illinois state boundaries after calculation. This is critical for cross-border transit agencies (Metro St. Louis, Metra) to ensure parking mandate relief applies only within Illinois jurisdiction. Area calculations reflect only the Illinois portions of buffer zones.
