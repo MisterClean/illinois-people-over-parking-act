@@ -14,6 +14,8 @@ output:
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 ```
 
+Note: The People Over Parking Act was made possible by the volunteers of [Abundant Housing Illinois](https://abundanthousingillinois.org/). Please consider joining as a member if you are interested in organizing for more land use reform in Illinois.
+
 ### What Are Parking Mandates?
 
 Parking mandates, also known as parking minimums, are zoning regulations that require developers to build a minimum number of parking spaces with new housing and commercial developments. These mandates typically specify a certain number of parking spaces per unit of housing, square footage of retail space, or other metrics depending on the development type.
@@ -181,7 +183,6 @@ if (has_direction_id) {
               100 * sum(!is.na(all_trips$direction_id)) / nrow(all_trips)))
 }
 ```
-
 
 ```{r process_hubs_UPDATED, results='hide'}
 ## Identify Public Transportation Hubs
@@ -426,48 +427,48 @@ This analysis implements the following methodology to identify qualifying transi
 
 **Peak Period Definition:**
 
-- Morning peak: 7:00 AM - 9:00 AM (120 minutes)
-- Afternoon peak: 4:00 PM - 6:00 PM (120 minutes)
-- Service is analyzed separately for each period; locations qualify if they meet frequency thresholds in **either** AM **or** PM
+-   Morning peak: 7:00 AM - 9:00 AM (120 minutes)
+-   Afternoon peak: 4:00 PM - 6:00 PM (120 minutes)
+-   Service is analyzed separately for each period; locations qualify if they meet frequency thresholds in **either** AM **or** PM
 
 **Stop Clustering (Bus Hubs Only):**
 
-- Bus stops within **150 feet** of each other are spatially clustered to represent physical intersections
-- This prevents overcounting stops at the same street corner and aligns with the statutory concept of "an intersection of 2 or more bus routes"
-- Clustering uses Illinois State Plane East projection (EPSG:3435) for accurate distance measurement
+-   Bus stops within **150 feet** of each other are spatially clustered to represent physical intersections
+-   This prevents overcounting stops at the same street corner and aligns with the statutory concept of "an intersection of 2 or more bus routes"
+-   Clustering uses Illinois State Plane East projection (EPSG:3435) for accurate distance measurement
 
 **Route Overlap Verification (Bus Hubs Only):**
 
-- After clustering, we verify that routes actually overlap at the same physical intersection or street
-- Stop names (e.g., "Jackson & Lotus", "Oak Ave & Davis St") are parsed to extract street names
-- A cluster qualifies only if **2 or more routes share at least one common street name**
-- This helps ensure routes truly intersect at the location, not just have nearby stops within 150 feet
-- Example: Route A stops at "State & Madison", Route B stops at "State & Monroe" (both within 150ft) → they share "State" street → overlap verified
+-   After clustering, we verify that routes actually overlap at the same physical intersection or street
+-   Stop names (e.g., "Jackson & Lotus", "Oak Ave & Davis St") are parsed to extract street names
+-   A cluster qualifies only if **2 or more routes share at least one common street name**
+-   This helps ensure routes truly intersect at the location, not just have nearby stops within 150 feet
+-   Example: Route A stops at "State & Madison", Route B stops at "State & Monroe" (both within 150ft) → they share "State" street → overlap verified
 
 **Combined Frequency Calculation:**
 
-- For each stop cluster (hubs) or individual stop (corridors), we count total trips across all routes during each peak period
-- Combined service interval = peak period duration (120 min) ÷ total trips
-- Example: 8 trips in 2 hours = 120 ÷ 8 = **15 minute average interval**
+-   For each stop cluster (hubs) or individual stop (corridors), we count total trips across all routes during each peak period
+-   Combined service interval = peak period duration (120 min) ÷ total trips
+-   Example: 8 trips in 2 hours = 120 ÷ 8 = **15 minute average interval**
 
 **Qualification Criteria:**
 
-- **Bus Hubs**: Must have **2 or more routes** AND **combined frequency ≤ 15 minutes** in at least one peak period AND **routes must overlap on same street/intersection**
-- **Bus Corridors**: Must have **1 or more routes** AND **combined frequency ≤ 15 minutes** in at least one peak period
-- **Rail Hubs**: All rail stations within Illinois automatically qualify (CTA rail, Metra, and Metro St. Louis MetroLink)
+-   **Bus Hubs**: Must have **2 or more routes** AND **combined frequency ≤ 15 minutes** in at least one peak period AND **routes must overlap on same street/intersection**
+-   **Bus Corridors**: Must have **1 or more routes** AND **combined frequency ≤ 15 minutes** in at least one peak period
+-   **Rail Hubs**: All rail stations within Illinois automatically qualify (CTA rail, Metra, and Metro St. Louis MetroLink)
 
 **Direction Handling:**
 
-- If GTFS `direction_id` data is available, routes are analyzed by direction (northbound/southbound, eastbound/westbound)
-- This provides more accurate service frequency calculations at directional stops
+-   If GTFS `direction_id` data is available, routes are analyzed by direction (northbound/southbound, eastbound/westbound)
+-   This provides more accurate service frequency calculations at directional stops
 
 **Geographic Boundaries and Clipping:**
 
-- All transit hub and corridor buffers are clipped to Illinois state boundaries
-- This ensures parking mandate relief applies only to areas within Illinois jurisdiction
-- Metro St. Louis transit system operates across the Illinois-Missouri border; only Illinois portions of hub/corridor buffers are included in the analysis
-- Metra serves some stations in Wisconsin (Kenosha County); these are excluded from the analysis (latitude filter at 42.5°)
-- Clipping is performed after buffer creation using the U.S. Census TIGER/Line state boundary for Illinois
+-   All transit hub and corridor buffers are clipped to Illinois state boundaries
+-   This ensures parking mandate relief applies only to areas within Illinois jurisdiction
+-   Metro St. Louis transit system operates across the Illinois-Missouri border; only Illinois portions of hub/corridor buffers are included in the analysis
+-   Metra serves some stations in Wisconsin (Kenosha County); these are excluded from the analysis (latitude filter at 42.5°)
+-   Clipping is performed after buffer creation using the U.S. Census TIGER/Line state boundary for Illinois
 
 ### Statutory Interpretation and Ambiguities
 
@@ -481,41 +482,35 @@ Senate Bill 2111 contains three ambiguities that significantly affect which area
 
 **Legal implications**: Municipalities and courts may interpret these provisions differently, leading to variation in the geographic extent of parking minimum relief across Illinois. This analysis represents one reasonable interpretation aligned with the statute's apparent intent to promote transit-oriented development in areas with genuine high-frequency transit service.
 
-
 ### Data Sources
 
 **Transit Data (GTFS Feeds):**
 
 This analysis incorporates **14 transit agencies** covering major urban areas across Illinois:
 
-- **Chicago Metro Area:**
-  - CTA (Chicago Transit Authority) - Rail + Bus
-  - Pace Suburban Bus
-  - Metra Commuter Rail
-- **Metro-East (Illinois portion):**
-  - Metro St. Louis (MetroLink Light Rail + MetroBus)
-    - Note: Operates in both Missouri and Illinois; only Illinois portions included after geographic clipping
-- **Champaign-Urbana:** CUMTD (Champaign-Urbana Mass Transit District)
-- **Rockford:** RMTD (Rockford Mass Transit District)
-- **Quad Cities:** MetroLINK (Rock Island County Metropolitan Mass Transit District)
-- **Peoria:** CityLink (Greater Peoria Mass Transit District)
-- **Springfield:** SMTD (Sangamon Mass Transit District)
-- **Bloomington-Normal:** Connect Transit
-- **DeKalb:** DeKalb Public Transit
-- **Decatur:** DPTS (Decatur Public Transit System)
-- **Galesburg:** Galesburg Transit
-- **Macomb:** Go West Transit (Macomb McDonough County Public Transportation)
+-   **Chicago Metro Area:**
+    -   CTA (Chicago Transit Authority) - Rail + Bus
+    -   Pace Suburban Bus
+    -   Metra Commuter Rail
+-   **Metro-East (Illinois portion):**
+    -   Metro St. Louis (MetroLink Light Rail + MetroBus)
+        -   Note: Operates in both Missouri and Illinois; only Illinois portions included after geographic clipping
+-   **Champaign-Urbana:** CUMTD (Champaign-Urbana Mass Transit District)
+-   **Rockford:** RMTD (Rockford Mass Transit District)
+-   **Quad Cities:** MetroLINK (Rock Island County Metropolitan Mass Transit District)
+-   **Peoria:** CityLink (Greater Peoria Mass Transit District)
+-   **Springfield:** SMTD (Sangamon Mass Transit District)
+-   **Bloomington-Normal:** Connect Transit
+-   **DeKalb:** DeKalb Public Transit
+-   **Decatur:** DPTS (Decatur Public Transit System)
+-   **Galesburg:** Galesburg Transit
+-   **Macomb:** Go West Transit (Macomb McDonough County Public Transportation)
 
 **Geographic Data:**
 
-- TIGER/Line street network data from U.S. Census Bureau via tigris package
-- Illinois state boundary via tigris package
+-   TIGER/Line street network data from U.S. Census Bureau via tigris package
+-   Illinois state boundary via tigris package
 
 **Counties Covered:**
 
-The analysis includes **14 Illinois counties** across major urban areas:
-- **Chicago Metro:** Cook, DuPage, Kane, Lake, McHenry, Will
-- **Metro-East:** St. Clair
-- **Central Illinois:** Champaign, McLean, Peoria, Sangamon, Macon
-- **Northern Illinois:** Winnebago, DeKalb, Rock Island
-- **Western Illinois:** Knox, McDonough
+The analysis includes **14 Illinois counties** across major urban areas: - **Chicago Metro:** Cook, DuPage, Kane, Lake, McHenry, Will - **Metro-East:** St. Clair - **Central Illinois:** Champaign, McLean, Peoria, Sangamon, Macon - **Northern Illinois:** Winnebago, DeKalb, Rock Island - **Western Illinois:** Knox, McDonough
