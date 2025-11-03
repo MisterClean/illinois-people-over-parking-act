@@ -153,23 +153,25 @@ for (agency_id in all_agency_ids) {
   cat("\n")
 }
 
-# If direction_id exists, add it to all_trips
-if ("direction_id" %in% names(cta_data$trips) |
-    "direction_id" %in% names(pace_data$trips) |
-    "direction_id" %in% names(metra_data$trips) |
-    "direction_id" %in% names(metro_stl_data$trips) |
-    "direction_id" %in% names(cumtd_data$trips) |
-    "direction_id" %in% names(rmtd_data$trips)) {
+# If direction_id exists in any agency, ensure it exists in all and rebuild all_trips
+has_direction_id <- any(sapply(all_agency_ids, function(agency_id) {
+  "direction_id" %in% names(gtfs_data$agency_data[[agency_id]]$trips)
+}))
 
-  # Ensure direction_id exists in all datasets (add NA if missing)
-  for (data in list(cta_data, pace_data, metra_data, metro_stl_data, cumtd_data, rmtd_data)) {
-    if (!"direction_id" %in% names(data$trips)) {
-      data$trips[, direction_id := NA_integer_]
+if (has_direction_id) {
+  # Ensure direction_id exists in all agency datasets (add NA if missing)
+  for (agency_id in all_agency_ids) {
+    agency_data <- gtfs_data$agency_data[[agency_id]]
+    if (!"direction_id" %in% names(agency_data$trips)) {
+      agency_data$trips[, direction_id := NA_integer_]
     }
   }
 
-  # Rebuild all_trips with direction_id
-  all_trips <- rbindlist(list(cta_data$trips, pace_data$trips, metra_data$trips, metro_stl_data$trips, cumtd_data$trips, rmtd_data$trips), fill = TRUE)
+  # Rebuild all_trips with direction_id from all agencies dynamically
+  all_trips_list <- lapply(all_agency_ids, function(agency_id) {
+    gtfs_data$agency_data[[agency_id]]$trips
+  })
+  all_trips <- rbindlist(all_trips_list, fill = TRUE)
 
   cat("direction_id added to all_trips\n")
   cat(sprintf("Trips with direction_id: %d / %d (%.1f%%)\n",
@@ -193,6 +195,11 @@ hub_results <- identify_all_hubs(
 all_hubs_sf <- hub_results$all_hubs_sf
 am_peak_bus_stops <- hub_results$am_peak_bus_stops
 pm_peak_bus_stops <- hub_results$pm_peak_bus_stops
+
+# Filter hubs to only those within Illinois boundary
+# This excludes St. Louis metro stations in Missouri
+all_hubs_sf <- st_intersection(all_hubs_sf, illinois_boundary)
+cat(sprintf("Hubs after filtering to Illinois boundary: %d\n", nrow(all_hubs_sf)))
 ```
 
 ```{r process_corridors_and_buffers, results='hide'}
