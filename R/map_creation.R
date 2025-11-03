@@ -70,12 +70,14 @@ create_hub_popup_html <- function(hub_sf) {
 #' Create Interactive Map
 #'
 #' Creates a Leaflet map showing transit hubs, corridors, and affected areas.
-#' Dynamically handles all agencies via metadata. Includes layer controls.
+#' Dynamically handles all agencies via metadata. Includes layer controls and
+#' Illinois state boundary outline.
 #'
 #' @param all_hubs_sf sf object with all transit hubs
 #' @param all_affected_areas sf object with combined affected areas
 #' @param hub_buffers List from create_hub_buffers() with per_agency_union field
 #' @param all_corridors_union sf object with corridor buffers
+#' @param illinois_boundary sf object with Illinois state boundary (for outline)
 #' @param center_lng Longitude for map center (default: Chicago -87.6079)
 #' @param center_lat Latitude for map center (default: Chicago 41.8917)
 #' @param zoom Initial zoom level (default: 9)
@@ -88,13 +90,15 @@ create_hub_popup_html <- function(hub_sf) {
 #'   all_hubs_sf,
 #'   all_affected_areas_combined,
 #'   hub_buffers,
-#'   all_corridors_union_wgs84
+#'   all_corridors_union_wgs84,
+#'   illinois_boundary
 #' )
 #' }
 create_interactive_map <- function(all_hubs_sf,
                                    all_affected_areas,
                                    hub_buffers,
                                    all_corridors_union,
+                                   illinois_boundary,
                                    center_lng = -87.6079,
                                    center_lat = 41.8917,
                                    zoom = 9) {
@@ -205,6 +209,15 @@ create_interactive_map <- function(all_hubs_sf,
           ""
         )
       )
+    ) %>%
+
+    # Add Illinois state boundary outline (reference line, always visible)
+    addPolylines(
+      data = illinois_boundary,
+      color = "#666666",
+      weight = 2,
+      opacity = 0.8,
+      fill = FALSE
     )
 
   # Build overlay groups list dynamically

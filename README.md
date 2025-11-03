@@ -2,7 +2,7 @@
 
 This repository contains a comprehensive geospatial analysis that identifies areas in Illinois qualifying for parking minimum relief under **Senate Bill 2111** (the "People Over Parking Act"), signed into law in 2024.
 
-The project combines GTFS transit data from 5 agencies across Illinois with advanced spatial analysis to map transit-accessible areas where municipalities cannot enforce parking minimums.
+The project combines GTFS transit data from 14 agencies across Illinois with advanced spatial analysis to map transit-accessible areas where municipalities cannot enforce parking minimums.
 
 ## What is SB2111?
 
@@ -26,20 +26,47 @@ Senate Bill 2111 prohibits municipalities in Illinois from enforcing parking min
 
 ## Geographic Coverage
 
-This analysis covers **all major transit agencies in Illinois**:
+This analysis covers **all major transit agencies across Illinois**:
 
 ### Chicago Metropolitan Area (6 counties)
 - **CTA** (Chicago Transit Authority) - Bus and Rail (L train)
 - **Pace** - Suburban Bus
 - **Metra** - Commuter Rail
 
-### St. Louis Metropolitan Area, Illinois Side (3 counties)
+### St. Louis Metropolitan Area, Illinois Side (1 county)
 - **Metro St. Louis** - Bus and MetroLink (light rail)
 
 ### Champaign-Urbana (1 county)
 - **CUMTD** (Champaign-Urbana Mass Transit District) - Bus
 
-**Total Coverage**: 10 counties, 5 transit agencies, 1000+ routes analyzed
+### Rockford Region (1 county)
+- **RMTD** (Rockford Mass Transit District) - Bus
+
+### Quad Cities Region (1 county)
+- **MetroLINK** (Rock Island County Mass Transit) - Bus
+
+### Greater Peoria (1 county)
+- **CityLink** (Greater Peoria Mass Transit) - Bus
+
+### Springfield (1 county)
+- **SMTD** (Sangamon Mass Transit District) - Bus
+
+### DeKalb (1 county)
+- **DeKalb Transit** - Bus
+
+### Bloomington-Normal (1 county)
+- **Connect Transit** - Bus
+
+### Decatur (1 county)
+- **DPTS** (Decatur Public Transit System) - Bus
+
+### Galesburg (1 county)
+- **Galesburg Transit** - Bus
+
+### Macomb (1 county)
+- **Go West** (McDonough County Public Transportation) - Bus
+
+**Total Coverage**: 14+ counties, 14 transit agencies, 1500+ routes analyzed
 
 **Important**: All transit buffers are clipped to Illinois state boundaries to comply with the state law's jurisdiction. Stations in Wisconsin (Metra) and Missouri (Metro STL) are excluded.
 
@@ -53,17 +80,24 @@ This project uses a **modular architecture** with separate, reusable R functions
 illinois-people-over-parking-act/
 ├── README.md                          # This file
 ├── CLAUDE.md                          # AI assistant guidance & architecture docs
-├── sb2111-people-over-parking.Rmd     # Main analysis orchestration (~1330 lines)
+├── sb2111-people-over-parking.Rmd     # Main analysis orchestration (~606 lines)
 │
-├── R/                                 # Modular R functions (7 modules, ~2000 lines)
+├── R/                                 # Modular R functions (14 modules, ~4000 lines)
 │   ├── README.md                      # Comprehensive module documentation
+│   ├── agency_metadata.R              # Centralized agency configuration
 │   ├── gtfs_download.R                # Download GTFS data with caching
 │   ├── gtfs_normalize.R               # Normalize GTFS across agencies
 │   ├── gtfs_validate.R                # Validate GTFS data quality
+│   ├── gtfs_processing.R              # High-level GTFS workflow orchestration
 │   ├── spatial_validate.R             # Validate spatial operations
-│   ├── hub_identification.R           # Identify rail stations & bus routes
 │   ├── spatial_clustering.R           # Cluster stops & verify overlaps
-│   └── frequency_calc.R               # Calculate frequencies & apply criteria
+│   ├── frequency_calc.R               # Calculate frequencies & apply criteria
+│   ├── hub_identification.R           # Identify rail stations & bus routes
+│   ├── hub_processing.R               # High-level hub workflow orchestration
+│   ├── corridor_processing.R          # Corridor qualification & buffering
+│   ├── buffer_processing.R            # Buffer creation & combination
+│   ├── map_creation.R                 # Interactive Leaflet map generation
+│   └── summary_stats.R                # Comprehensive summary statistics
 │
 ├── tests/                             # Testing infrastructure
 │   └── testthat/                      # Unit and integration tests
@@ -71,14 +105,24 @@ illinois-people-over-parking-act/
 │
 ├── docs/                              # Methodology documentation
 │   ├── gtfs_normalization_strategy.md
-│   └── bus_transit_hub_verification_summary.md
+│   ├── bus_transit_hub_verification_summary.md
+│   └── new_agencies_feed_characteristics.md
 │
-└── gtfs_cache/                        # Cached GTFS data (5 zip files)
+└── gtfs_cache/                        # Cached GTFS data (14 zip files)
     ├── cta_gtfs.zip
     ├── pace_gtfs.zip
     ├── metra_gtfs.zip
     ├── metro_stl_gtfs.zip
-    └── cumtd_gtfs.zip
+    ├── cumtd_gtfs.zip
+    ├── rmtd_gtfs.zip
+    ├── metrolink_quad_cities_gtfs.zip
+    ├── citylink_gtfs.zip
+    ├── smtd_gtfs.zip
+    ├── dekalb_gtfs.zip
+    ├── connect_transit_gtfs.zip
+    ├── dpts_gtfs.zip
+    ├── galesburg_gtfs.zip
+    └── gowest_gtfs.zip
 ```
 
 ### Code Organization
@@ -196,7 +240,7 @@ install.packages(required_packages)
 - **R**: Version 4.0 or higher recommended
 - **RStudio**: Optional, but recommended for rendering R Markdown
 - **Internet connection**: For downloading GTFS data and geographic boundaries
-- **Memory**: 8GB+ RAM recommended (processing 5 agencies of GTFS data)
+- **Memory**: 8GB+ RAM recommended (processing 14 agencies of GTFS data)
 
 ---
 
@@ -225,7 +269,7 @@ install.packages(required_packages)
 The analysis will:
 
 1. ✅ **Load R modules** - Sources all functions from `R/` directory
-2. ✅ **Download GTFS data** - Downloads from 5 agencies (or uses `gtfs_cache/`)
+2. ✅ **Download GTFS data** - Downloads from 14 agencies (or uses `gtfs_cache/`)
 3. ✅ **Validate data quality** - Runs comprehensive validation checks
 4. ✅ **Normalize data** - Creates unique IDs across agencies (e.g., `cta_1234`)
 5. ✅ **Identify rail stations** - Agency-specific logic for CTA/Metra/Metro STL
@@ -297,30 +341,51 @@ See [R/README.md](R/README.md) for comprehensive module documentation with examp
 ### Data Flow
 
 ```
-GTFS Data (5 agencies)
-    ↓ download_and_extract_gtfs()
-    ↓ read_normalize_gtfs()
-    ↓ ✓ VALIDATION: validate_all_gtfs()
-Combined GTFS tables
-    ↓ identify_weekday_services()
-    ↓ filter_peak_period_stop_times()
-    ↓ Split AM/PM peaks
-Transit Hubs (rail + bus)
-    ↓ identify_all_rail_stations()
-    ↓ cluster_stops_spatial() [150ft]
-    ↓ verify_route_overlap_at_cluster()
-    ↓ calculate_peak_frequency()
-    ↓ apply_hub_qualification()
-    ↓ ✓ VALIDATION: validate_geometries()
-    ↓ Buffer 1/2 mile
-Transit Corridors
-    ↓ Snap to TIGER/Line streets
-    ↓ Buffer 1/8 mile
-    ↓ apply_corridor_qualification()
-Combined Areas
-    ↓ ✓ VALIDATION: validate_coordinate_transform()
-    ↓ Clip to Illinois boundary
-Interactive Leaflet Map (HTML)
+GTFS Data (14 agencies across Illinois)
+    ↓
+    ↓ process_all_gtfs_data() [R/gtfs_processing.R]
+    ↓   ├─ Downloads all agencies (or uses cache)
+    ↓   ├─ Normalizes tables (unique IDs, calendar handling)
+    ↓   ├─ ✓ Validates data quality
+    ↓   └─ Combines into unified tables
+    ↓
+Combined GTFS tables (stops, routes, trips, stop_times, calendar)
+    ↓
+    ↓ identify_all_hubs() [R/hub_processing.R]
+    ↓   ├─ Identifies rail stations (CTA, Metra, Metro STL)
+    ↓   ├─ Identifies weekday services
+    ↓   ├─ Filters to AM/PM peak periods (7-9am, 4-6pm)
+    ↓   ├─ Clusters bus stops spatially (150ft radius)
+    ↓   ├─ Verifies route overlap (street name matching)
+    ↓   ├─ Calculates frequency metrics (AM & PM)
+    ↓   └─ Applies qualification criteria (2+ routes, ≤15 min)
+    ↓
+Transit Hubs (rail + qualifying bus hubs)
+    ↓
+    ├──→ create_hub_buffers() [R/buffer_processing.R]
+    │      └─ Creates 1/2 mile (2640 ft) buffers by agency
+    │
+    └──→ identify_qualifying_corridors() [R/corridor_processing.R]
+           ├─ Calculates corridor frequencies (1+ route, ≤15 min)
+           └─ create_corridor_buffers()
+              ├─ Downloads TIGER/Line street network
+              ├─ Snaps stops to nearest streets
+              └─ Creates 1/8 mile (660 ft) buffers
+    ↓
+Hub Buffers + Corridor Buffers
+    ↓
+    ↓ create_combined_buffers() [R/buffer_processing.R]
+    ↓   ├─ Combines all affected areas
+    ↓   └─ Clips to Illinois boundary
+    ↓
+Combined Affected Areas + Hub Points
+    ↓
+    ↓ create_interactive_map() [R/map_creation.R]
+    ↓   ├─ Builds Leaflet map with layers
+    ↓   ├─ Adds agency-specific colors & controls
+    ↓   └─ Creates rich popups for hubs
+    ↓
+Interactive HTML Map + Summary Statistics
 ```
 
 ### Data Sources
@@ -331,17 +396,15 @@ Interactive Leaflet Map (HTML)
   - Metra: https://schedules.metrarail.com/
   - Metro STL: https://metrostlouis.org/
   - CUMTD: http://developer.cumtd.com/
-
-TODO:
--- Rockford Mass Transit District (RMTD) https://dfef8f.p3cdn2.secureserver.net/wp-content/uploads/2023/08/RMTD_GTFS_AUGUST_2023.zip
--- Metro Rock Island County Metropolitan Mass Transit District (MetroLINK) https://www.metroqc.com/documentcenter/view/404
--- Greater Peoria Mass Transit (CityLink) https://clk.rideralerts.com/InfoPoint/gtfs-zip.ashx
--- Sangamon Mass Transit District (SMTD) http://data.smtd.org/gtfs/smtd_gtfs_feed.zip
--- DeKalb Public Transit https://data.trilliumtransit.com/gtfs/cityofdekalb-il-us/cityofdekalb-il-us.zip
--- Bloomington Connect Transit https://rideconnecttransit.com/gtfs
--- Decatur Public Transit System (DPTS) https://gtfs.remix.com/dpts_decatur_il_us.zip
--- Galesburg Transit https://gis.ci.galesburg.il.us/cityofgalesburg-il-us.zip
--- Macomb McDonough County Public Transportation (Go West Transit) https://api.transloc.com/gtfs/wiu.zip
+  - RMTD: https://dfef8f.p3cdn2.secureserver.net/wp-content/uploads/2023/08/RMTD_GTFS_AUGUST_2023.zip
+  - MetroLINK (Quad Cities): https://www.metroqc.com/documentcenter/view/404
+  - CityLink (Peoria): https://clk.rideralerts.com/InfoPoint/gtfs-zip.ashx
+  - SMTD (Springfield): http://data.smtd.org/gtfs/smtd_gtfs_feed.zip
+  - DeKalb Transit: https://data.trilliumtransit.com/gtfs/cityofdekalb-il-us/cityofdekalb-il-us.zip
+  - Connect Transit (Bloomington): https://rideconnecttransit.com/gtfs
+  - DPTS (Decatur): https://gtfs.remix.com/dpts_decatur_il_us.zip
+  - Galesburg Transit: https://gis.ci.galesburg.il.us/cityofgalesburg-il-us.zip
+  - Go West (Macomb): https://api.transloc.com/gtfs/wiu.zip
 
 - **Geographic Boundaries**: Illinois state boundaries via US Census TIGER/Line
 - **Street Network**: Road centerlines via TIGER/Line for accurate distance calculations
@@ -428,13 +491,24 @@ See [R/README.md](R/README.md) for testing conventions and examples.
 
 ## Code Quality
 
-**Recent Enhancements** (December 2024 - January 2025):
+**Recent Enhancements** (December 2024 - November 2025):
 
-1. ✅ **Modularization**: Extracted 2,500+ lines into 7 reusable R modules
+**Phase 1 - Foundation Modules** (December 2024 - January 2025):
+1. ✅ **Modularization**: Extracted 2,500+ lines into 7 foundation R modules
 2. ✅ **Validation**: Added comprehensive GTFS and spatial validation (11 functions)
-3. ✅ **Documentation**: 100% roxygen2 coverage on all 28 extracted functions
+3. ✅ **Documentation**: 100% roxygen2 coverage on all extracted functions
 4. ✅ **Testing Infrastructure**: Created testthat framework (tests in development)
 5. ✅ **Error Handling**: Improved error messages and recovery strategies
+
+**Phase 2 - Orchestration & Simplification** (January 2025):
+1. ✅ **High-Level Workflows**: Created 6 orchestration modules combining foundation functions
+2. ✅ **Notebook Simplification**: Reduced main Rmd from 1,330 lines to 606 lines (54% reduction)
+3. ✅ **Code Reusability**: Major processing steps now single function calls
+
+**Phase 3 - Statewide Expansion** (November 2025):
+1. ✅ **Agency Expansion**: Added 8 new transit agencies across Illinois (6 → 14 total)
+2. ✅ **Centralized Configuration**: Created agency_metadata.R module for scalability
+3. ✅ **Statewide Coverage**: Expanded from Chicago metro to comprehensive Illinois coverage
 
 **Benefits**:
 - Code reusability across transit analysis projects

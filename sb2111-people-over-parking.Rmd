@@ -1,7 +1,7 @@
 ---
 title: "The Illinois People Over Parking Act (Updated)"
-author: "Michael McLean - Member, Abundant Housing Illinois (Updated by AI)"
-date: "October 30, 2025"
+author: "Michael McLean - Member, Abundant Housing Illinois"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
 output_file: "docs/index.html"
 output:
   html_document:
@@ -42,7 +42,7 @@ options(repos = c(CRAN = "https://cloud.r-project.org/"))
 
 # Install packages if not already installed
 required_packages <- c("tidyverse", "sf", "leaflet", "leaflet.extras",
-                       "data.table", "zip", "httr", "lubridate", "mapview", "tigris")
+                       "data.table", "zip", "httr", "lubridate", "mapview", "tigris", "kableExtra")
 
 new_packages <- required_packages[!required_packages %in% installed.packages()[,"Package"]]
 if(length(new_packages)) install.packages(new_packages)
@@ -58,6 +58,7 @@ library(httr)
 library(lubridate)
 library(mapview)
 library(tigris) # Added for street network data and state boundaries
+library(kableExtra) # Added for enhanced table formatting
 
 # Disable s2 processing to avoid geometry validation issues
 sf_use_s2(FALSE)
@@ -68,7 +69,7 @@ illinois_boundary <- states(cb = TRUE, year = 2023) %>%
   st_transform(4326)  # Transform to WGS84
 ```
 
-```{r load_existing_data}
+```{r load_existing_data, results='hide'}
 ## Load Existing Hub Data and Corridor Data
 
 # Load the existing hub processing results (from the original analysis)
@@ -238,7 +239,7 @@ all_affected_areas_combined <- create_combined_buffers(
 )
 ```
 
-```{r calculate_areas}
+```{r calculate_areas, results='hide'}
 ## Calculate Areas
 
 # Calculate areas in square miles
@@ -281,6 +282,7 @@ map <- create_interactive_map(
   all_affected_areas_combined,
   hub_buffers,  # Now accepts full buffer object
   all_corridors_union_wgs84,
+  illinois_boundary,  # Add Illinois state outline
   center_lng = -87.6079,
   center_lat = 41.8917,
   zoom = 9
@@ -353,17 +355,41 @@ This analysis implements the following methodology to identify qualifying transi
 
 **Data Sources:**
 
-- Chicago area: CTA, Pace, and Metra GTFS (General Transit Feed Specification) data
-- St. Louis area: Metro St. Louis GTFS data (includes MetroLink light rail and MetroBus)
-  - Note: Metro St. Louis operates in both Missouri and Illinois; only Illinois portions are included after geographic clipping
-- Champaign-Urbana: CUMTD (Champaign-Urbana Mass Transit District) GTFS data
-- Rockford: RMTD (Rockford Mass Transit District) GTFS data
+**Transit Data (GTFS Feeds):**
+
+This analysis incorporates **14 transit agencies** covering major urban areas across Illinois:
+
+- **Chicago Metro Area:**
+  - CTA (Chicago Transit Authority) - Rail + Bus
+  - Pace Suburban Bus
+  - Metra Commuter Rail
+- **Metro-East (Illinois portion):**
+  - Metro St. Louis (MetroLink Light Rail + MetroBus)
+    - Note: Operates in both Missouri and Illinois; only Illinois portions included after geographic clipping
+- **Champaign-Urbana:** CUMTD (Champaign-Urbana Mass Transit District)
+- **Rockford:** RMTD (Rockford Mass Transit District)
+- **Quad Cities:** MetroLINK (Rock Island County Metropolitan Mass Transit District)
+- **Peoria:** CityLink (Greater Peoria Mass Transit District)
+- **Springfield:** SMTD (Sangamon Mass Transit District)
+- **Bloomington-Normal:** Connect Transit
+- **DeKalb:** DeKalb Public Transit
+- **Decatur:** DPTS (Decatur Public Transit System)
+- **Galesburg:** Galesburg Transit
+- **Macomb:** Go West Transit (Macomb McDonough County Public Transportation)
+
+**Geographic Data:**
+
 - TIGER/Line street network data from U.S. Census Bureau via tigris package
-- Analysis covers 11 Illinois counties:
-  - Chicago metro: Cook, DuPage, Kane, Lake, McHenry, and Will
-  - St. Louis metro: St. Clair, Madison, and Monroe
-  - Champaign-Urbana: Champaign
-  - Rockford: Winnebago
+- Illinois state boundary via tigris package
+
+**Counties Covered:**
+
+The analysis includes **14 Illinois counties** across major urban areas:
+- **Chicago Metro:** Cook, DuPage, Kane, Lake, McHenry, Will
+- **Metro-East:** St. Clair
+- **Central Illinois:** Champaign, McLean, Peoria, Sangamon, Macon
+- **Northern Illinois:** Winnebago, DeKalb, Rock Island
+- **Western Illinois:** Knox, McDonough
 
 
 
@@ -394,6 +420,95 @@ qualifying_corridor_stops <- stats$qualifying_corridor_stops
 
 ## Summary Statistics
 
+```{r agency_summary_table, echo=FALSE}
+# Calculate per-agency relief areas
+agency_metadata <- get_agency_metadata()
+agency_ids <- get_all_agency_ids()
+
+# Build summary table
+agency_summary <- data.frame(
+  Agency = character(),
+  `Bus Hubs` = integer(),
+  `Rail Hubs` = integer(),
+  `Bus Stops in Hubs` = integer(),
+  `Relief Area (sq mi)` = numeric(),
+  stringsAsFactors = FALSE,
+  check.names = FALSE
+)
+
+for (agency_id in agency_ids) {
+  # Get display name
+  agency_name <- get_agency_display_name(agency_id)
+
+  # Bus hubs count
+  bus_hubs <- if (agency_id %in% bus_hub_summary$agency) {
+    bus_hub_summary[bus_hub_summary$agency == agency_id, ]$unique_clusters
+  } else {
+    0
+  }
+
+  # Rail hubs count
+  rail_hubs <- if (agency_id %in% names(rail_hub_counts)) {
+    as.integer(rail_hub_counts[agency_id])
+  } else {
+    0
+  }
+
+  # Bus stops in hubs
+  bus_stops <- if (agency_id %in% bus_hub_summary$agency) {
+    bus_hub_summary[bus_hub_summary$agency == agency_id, ]$total_stops
+  } else {
+    0
+  }
+
+  # Calculate relief area for this agency
+  if (agency_id %in% names(hub_buffers$per_agency_union)) {
+    agency_buffer <- hub_buffers$per_agency_union[[agency_id]]
+    area_sqmi <- as.numeric(units::set_units(st_area(agency_buffer), "mi^2"))
+  } else {
+    area_sqmi <- 0
+  }
+
+  # Add row to summary table
+  agency_summary <- rbind(agency_summary, data.frame(
+    Agency = agency_name,
+    `Bus Hubs` = bus_hubs,
+    `Rail Hubs` = rail_hubs,
+    `Bus Stops in Hubs` = bus_stops,
+    `Relief Area (sq mi)` = area_sqmi,
+    stringsAsFactors = FALSE,
+    check.names = FALSE
+  ))
+}
+
+# Add totals row
+agency_summary <- rbind(agency_summary, data.frame(
+  Agency = "**TOTAL**",
+  `Bus Hubs` = sum(agency_summary$`Bus Hubs`),
+  `Rail Hubs` = sum(agency_summary$`Rail Hubs`),
+  `Bus Stops in Hubs` = sum(agency_summary$`Bus Stops in Hubs`),
+  `Relief Area (sq mi)` = sum(agency_summary$`Relief Area (sq mi)`),
+  stringsAsFactors = FALSE,
+  check.names = FALSE
+))
+
+# Format and display table
+knitr::kable(
+  agency_summary,
+  format = "html",
+  align = c("l", "r", "r", "r", "r"),
+  digits = 2,
+  format.args = list(big.mark = ","),
+  caption = "Transit Agency Summary: People Over Parking Act Impact"
+) %>%
+  kableExtra::kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    position = "left"
+  ) %>%
+  kableExtra::row_spec(nrow(agency_summary), bold = TRUE, background = "#f0f0f0")
+```
+
 ### Bus Transit Hubs
 
 **Methodology:** Stops clustered at 150 ft radius; qualifies if 2+ routes AND combined frequency ≤15 min in EITHER AM (7-9am) or PM (4-6pm) peak period.
@@ -401,39 +516,38 @@ qualifying_corridor_stops <- stats$qualifying_corridor_stops
 **CTA:**
 
 - Bus hub stops: **`r cta_hub$total_stops`** (in `r cta_hub$unique_clusters` clusters)
-- Average routes per cluster: **`r sprintf("%.1f", cta_hub$avg_routes_am)` (AM)** / **`r sprintf("%.1f", cta_hub$avg_routes_pm)` (PM)**
-- Average service interval: **`r sprintf("%.1f", cta_hub$avg_interval_am)` min (AM)** / **`r sprintf("%.1f", cta_hub$avg_interval_pm)` min (PM)**
 
 **Pace:**
 
 - Bus hub stops: **`r pace_hub$total_stops`** (in `r pace_hub$unique_clusters` clusters)
-- Average routes per cluster: **`r sprintf("%.1f", pace_hub$avg_routes_am)` (AM)** / **`r sprintf("%.1f", pace_hub$avg_routes_pm)` (PM)**
-- Average service interval: **`r sprintf("%.1f", pace_hub$avg_interval_am)` min (AM)** / **`r sprintf("%.1f", pace_hub$avg_interval_pm)` min (PM)**
 
 **Metro St. Louis:**
 
 - Bus hub stops: **`r if(nrow(metro_stl_hub) > 0) metro_stl_hub$total_stops else 0`** (in `r if(nrow(metro_stl_hub) > 0) metro_stl_hub$unique_clusters else 0` clusters)
-- Average routes per cluster: **`r if(nrow(metro_stl_hub) > 0) sprintf("%.1f", metro_stl_hub$avg_routes_am) else "N/A"` (AM)** / **`r if(nrow(metro_stl_hub) > 0) sprintf("%.1f", metro_stl_hub$avg_routes_pm) else "N/A"` (PM)**
-- Average service interval: **`r if(nrow(metro_stl_hub) > 0) sprintf("%.1f", metro_stl_hub$avg_interval_am) else "N/A"` min (AM)** / **`r if(nrow(metro_stl_hub) > 0) sprintf("%.1f", metro_stl_hub$avg_interval_pm) else "N/A"` min (PM)**
 
 **Champaign-Urbana MTD:**
 
 - Bus hub stops: **`r if(nrow(cumtd_hub) > 0) cumtd_hub$total_stops else 0`** (in `r if(nrow(cumtd_hub) > 0) cumtd_hub$unique_clusters else 0` clusters)
-- Average routes per cluster: **`r if(nrow(cumtd_hub) > 0) sprintf("%.1f", cumtd_hub$avg_routes_am) else "N/A"` (AM)** / **`r if(nrow(cumtd_hub) > 0) sprintf("%.1f", cumtd_hub$avg_routes_pm) else "N/A"` (PM)**
-- Average service interval: **`r if(nrow(cumtd_hub) > 0) sprintf("%.1f", cumtd_hub$avg_interval_am) else "N/A"` min (AM)** / **`r if(nrow(cumtd_hub) > 0) sprintf("%.1f", cumtd_hub$avg_interval_pm) else "N/A"` min (PM)**
 
 **Rockford MTD:**
 
 - Bus hub stops: **`r if(nrow(rmtd_hub) > 0) rmtd_hub$total_stops else 0`** (in `r if(nrow(rmtd_hub) > 0) rmtd_hub$unique_clusters else 0` clusters)
-- Average routes per cluster: **`r if(nrow(rmtd_hub) > 0) sprintf("%.1f", rmtd_hub$avg_routes_am) else "N/A"` (AM)** / **`r if(nrow(rmtd_hub) > 0) sprintf("%.1f", rmtd_hub$avg_routes_pm) else "N/A"` (PM)**
-- Average service interval: **`r if(nrow(rmtd_hub) > 0) sprintf("%.1f", rmtd_hub$avg_interval_am) else "N/A"` min (AM)** / **`r if(nrow(rmtd_hub) > 0) sprintf("%.1f", rmtd_hub$avg_interval_pm) else "N/A"` min (PM)**
 
-**Rail Stations:** `r rail_hub_count`
-- CTA: `r if("cta" %in% names(rail_hub_counts)) rail_hub_counts["cta"] else 0`
-- Metra: `r if("metra" %in% names(rail_hub_counts)) rail_hub_counts["metra"] else 0`
-- Metro STL: `r if("metro_stl" %in% names(rail_hub_counts)) rail_hub_counts["metro_stl"] else 0`
+### Transit Hub Breakdown
 
 **Total Transit Hubs:** `r formatC(total_hubs, format="d", big.mark=",")`
+
+**By Type:**
+- **Rail Hubs:** `r rail_hub_count`
+  - CTA: `r if("cta" %in% names(rail_hub_counts)) rail_hub_counts["cta"] else 0`
+  - Metra: `r if("metra" %in% names(rail_hub_counts)) rail_hub_counts["metra"] else 0`
+  - Metro STL: `r if("metro_stl" %in% names(rail_hub_counts)) rail_hub_counts["metro_stl"] else 0`
+- **Bus Hubs:** `r sum(bus_hub_summary$unique_clusters)`
+  - CTA: `r cta_hub$unique_clusters`
+  - Pace: `r pace_hub$unique_clusters`
+  - Metro STL: `r if(nrow(metro_stl_hub) > 0) metro_stl_hub$unique_clusters else 0`
+  - CUMTD: `r if(nrow(cumtd_hub) > 0) cumtd_hub$unique_clusters else 0`
+  - RMTD: `r if(nrow(rmtd_hub) > 0) rmtd_hub$unique_clusters else 0`
 
 ### Bus Corridors
 
@@ -442,32 +556,22 @@ qualifying_corridor_stops <- stats$qualifying_corridor_stops
 **CTA:**
 
 - Corridor stops: **`r formatC(cta_corridor$total_stops, format="d", big.mark=",")`**
-- Average routes per stop: **`r sprintf("%.1f", cta_corridor$avg_routes_am)` (AM)** / **`r sprintf("%.1f", cta_corridor$avg_routes_pm)` (PM)**
-- Average service interval: **`r sprintf("%.1f", cta_corridor$avg_interval_am)` min (AM)** / **`r sprintf("%.1f", cta_corridor$avg_interval_pm)` min (PM)**
 
 **Pace:**
 
 - Corridor stops: **`r formatC(pace_corridor$total_stops, format="d", big.mark=",")`**
-- Average routes per stop: **`r sprintf("%.1f", pace_corridor$avg_routes_am)` (AM)** / **`r sprintf("%.1f", pace_corridor$avg_routes_pm)` (PM)**
-- Average service interval: **`r sprintf("%.1f", pace_corridor$avg_interval_am)` min (AM)** / **`r sprintf("%.1f", pace_corridor$avg_interval_pm)` min (PM)**
 
 **Metro St. Louis:**
 
 - Corridor stops: **`r if(nrow(metro_stl_corridor) > 0) formatC(metro_stl_corridor$total_stops, format="d", big.mark=",") else "0"`**
-- Average routes per stop: **`r if(nrow(metro_stl_corridor) > 0) sprintf("%.1f", metro_stl_corridor$avg_routes_am) else "N/A"` (AM)** / **`r if(nrow(metro_stl_corridor) > 0) sprintf("%.1f", metro_stl_corridor$avg_routes_pm) else "N/A"` (PM)**
-- Average service interval: **`r if(nrow(metro_stl_corridor) > 0) sprintf("%.1f", metro_stl_corridor$avg_interval_am) else "N/A"` min (AM)** / **`r if(nrow(metro_stl_corridor) > 0) sprintf("%.1f", metro_stl_corridor$avg_interval_pm) else "N/A"` min (PM)**
 
 **Champaign-Urbana MTD:**
 
 - Corridor stops: **`r if(nrow(cumtd_corridor) > 0) formatC(cumtd_corridor$total_stops, format="d", big.mark=",") else "0"`**
-- Average routes per stop: **`r if(nrow(cumtd_corridor) > 0) sprintf("%.1f", cumtd_corridor$avg_routes_am) else "N/A"` (AM)** / **`r if(nrow(cumtd_corridor) > 0) sprintf("%.1f", cumtd_corridor$avg_routes_pm) else "N/A"` (PM)**
-- Average service interval: **`r if(nrow(cumtd_corridor) > 0) sprintf("%.1f", cumtd_corridor$avg_interval_am) else "N/A"` min (AM)** / **`r if(nrow(cumtd_corridor) > 0) sprintf("%.1f", cumtd_corridor$avg_interval_pm) else "N/A"` min (PM)**
 
 **Rockford MTD:**
 
 - Corridor stops: **`r if(nrow(rmtd_corridor) > 0) formatC(rmtd_corridor$total_stops, format="d", big.mark=",") else "0"`**
-- Average routes per stop: **`r if(nrow(rmtd_corridor) > 0) sprintf("%.1f", rmtd_corridor$avg_routes_am) else "N/A"` (AM)** / **`r if(nrow(rmtd_corridor) > 0) sprintf("%.1f", rmtd_corridor$avg_routes_pm) else "N/A"` (PM)**
-- Average service interval: **`r if(nrow(rmtd_corridor) > 0) sprintf("%.1f", rmtd_corridor$avg_interval_am) else "N/A"` min (AM)** / **`r if(nrow(rmtd_corridor) > 0) sprintf("%.1f", rmtd_corridor$avg_interval_pm) else "N/A"` min (PM)**
 
 ### Geographic Coverage
 

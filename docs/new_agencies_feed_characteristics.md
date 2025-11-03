@@ -1,6 +1,6 @@
 # New Illinois Transit Agencies - GTFS Feed Characteristics
 
-**Date:** January 2025
+**Date:** Nov 2025
 **Purpose:** Documentation of GTFS feed structure and quirks for 8 newly added Illinois transit agencies
 
 ---

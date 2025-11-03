@@ -4,6 +4,74 @@ This directory contains modular R functions extracted from the main analysis not
 
 ## Module Organization
 
+### 🏢 **Agency Configuration** (`agency_metadata.R`)
+
+**Purpose**: Centralized configuration and metadata for all 14 transit agencies
+
+**Key Functions**:
+- `get_agency_metadata()` - Returns complete metadata structure for all agencies
+- `get_all_agency_ids()` - Vector of all agency IDs (e.g., `c("cta", "pace", ...)`)
+- `get_agency_display_name(id)` - Get display name (e.g., "CTA", "Pace")
+- `get_agency_full_name(id)` - Get full official name
+- `get_agency_color(id)` - Get hex color code for mapping
+- `get_agency_color_palette()` - Named vector of colors for all agencies
+- `get_rail_agencies()` - Vector of agency IDs with rail service
+- `has_rail(id)` - Check if agency has rail service (TRUE/FALSE)
+- `get_agency_configs_for_download()` - Configs formatted for GTFS download
+- `get_agency_count()` - Total number of agencies (14)
+
+**Usage**:
+```r
+source("R/agency_metadata.R")
+
+# Get all agency metadata
+metadata <- get_agency_metadata()
+cta_info <- metadata$cta
+cta_info$name   # "CTA"
+cta_info$color  # "#009CDE"
+cta_info$url    # "https://www.transitchicago.com/downloads/..."
+
+# Get specific attributes
+all_ids <- get_all_agency_ids()
+# c("cta", "pace", "metra", "metro_stl", "cumtd", "rmtd", ...)
+
+rail_only <- get_rail_agencies()
+# c("cta", "metra", "metro_stl")
+
+colors <- get_agency_color_palette()
+# Named vector: c("CTA" = "#009CDE", "Pace" = "#814C9E", ...)
+
+# Use in download workflow
+configs <- get_agency_configs_for_download()
+# list(list(name="cta", url="https://..."), ...)
+```
+
+**Metadata Structure**:
+Each agency includes:
+- `id` - Internal identifier (lowercase with underscores)
+- `name` - Display name for maps/summaries
+- `full_name` - Full official agency name
+- `url` - GTFS feed URL
+- `color` - Hex color code for mapping
+- `has_rail` - Boolean for rail service
+- `rail_type` - Type if has_rail: "cta_l", "commuter_rail", or "light_rail"
+- `geographic_filter` - Optional filtering (e.g., Metra latitude limit, Metro STL state boundary)
+
+**Adding New Agencies**:
+1. Add entry to `AGENCY_METADATA` list in `get_agency_metadata()`
+2. Choose unique color (check existing palette for contrast)
+3. Specify rail service type if applicable
+4. Add geographic filter if needed (e.g., latitude limits, state boundaries)
+5. All downstream code automatically incorporates the new agency
+
+**Benefits**:
+- **Single source of truth**: All agency config in one place
+- **Scalability**: Adding agencies requires only updating this file
+- **Consistency**: Colors, names, URLs never hard-coded elsewhere
+- **Type safety**: Structured metadata prevents typos and errors
+
+---
+
 ### 📥 **Data Acquisition & Processing** (`gtfs_download.R`, `gtfs_normalize.R`, `gtfs_processing.R`)
 
 **Purpose**: Download, extract, normalize, and process GTFS data from multiple transit agencies
@@ -443,16 +511,23 @@ rail_hub_count <- stats$rail_hub_count
 
 ## Module Dependencies
 
+### Configuration Module
+```
+agency_metadata.R ────────┐ (provides configuration to all modules)
+                         │
+```
+
 ### Low-Level Modules (Foundation)
 ```
-gtfs_download.R ──────────┐
-gtfs_normalize.R ─────────┤
-gtfs_validate.R ──────────├─→ gtfs_processing.R (high-level orchestration)
                          │
-spatial_validate.R ───────┤
-spatial_clustering.R ─────┤
-frequency_calc.R ─────────┤
-hub_identification.R ─────┘
+gtfs_download.R ─────────┤
+gtfs_normalize.R ────────┤
+gtfs_validate.R ─────────├─→ gtfs_processing.R (high-level orchestration)
+                         │
+spatial_validate.R ──────┤
+spatial_clustering.R ────┤
+frequency_calc.R ────────┤
+hub_identification.R ────┘
 ```
 
 ### High-Level Orchestration Modules
@@ -469,17 +544,20 @@ hub_processing.R ──────→ corridor_processing.R
 
 **Loading Order** (in `sb2111-people-over-parking.Rmd`):
 ```r
+# Configuration module (loads first - provides metadata for all agencies)
+source("R/agency_metadata.R")
+
 # Low-level modules (foundation)
 source("R/gtfs_download.R")
 source("R/gtfs_normalize.R")
 source("R/gtfs_validate.R")
-source("R/gtfs_processing.R")        # NEW: High-level GTFS orchestration
+source("R/gtfs_processing.R")        # High-level GTFS orchestration
 source("R/spatial_validate.R")
 source("R/spatial_clustering.R")
 source("R/frequency_calc.R")
 source("R/hub_identification.R")
 
-# High-level orchestration modules (NEW)
+# High-level orchestration modules
 source("R/hub_processing.R")         # Complete hub identification workflow
 source("R/corridor_processing.R")    # Corridor qualification & buffering
 source("R/buffer_processing.R")      # Buffer creation & combination
@@ -488,9 +566,10 @@ source("R/summary_stats.R")          # Summary statistics
 ```
 
 **Module Categories**:
+- **Configuration (1 module)**: Centralized agency metadata and configuration
 - **Foundation (7 modules)**: Low-level functions for specific tasks
 - **Orchestration (6 modules)**: High-level workflows that combine foundation modules
-- **Total**: 13 modules (~3,800 lines of documented, reusable code)
+- **Total**: 14 modules (~4,000 lines of documented, reusable code)
 
 ---
 

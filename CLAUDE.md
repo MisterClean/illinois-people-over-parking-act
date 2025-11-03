@@ -9,7 +9,7 @@ This project performs geospatial analysis to identify areas in Illinois that qua
 - **Transit Hubs**: Within 1/2 mile of stations/stops where 3+ transit routes intersect with 15-minute or better frequency
 - **Transit Corridors**: Within 1/8 mile of routes with 15-minute or better frequency
 
-The analysis covers all major transit agencies across Illinois (CTA, Pace, Metra, Metro St. Louis, CUMTD) and produces an interactive HTML map showing qualifying areas.
+The analysis covers 14 transit agencies across Illinois and produces an interactive HTML map showing qualifying areas.
 
 ## Commands
 
@@ -25,7 +25,8 @@ Or click the "Knit" button in RStudio when viewing `sb2111-people-over-parking.R
 **Install dependencies:**
 ```r
 required_packages <- c("tidyverse", "sf", "leaflet", "leaflet.extras",
-                       "data.table", "zip", "httr", "lubridate", "mapview", "tigris")
+                       "data.table", "zip", "httr", "lubridate", "mapview",
+                       "tigris", "kableExtra")
 install.packages(required_packages)
 ```
 
@@ -34,16 +35,19 @@ install.packages(required_packages)
 ### Code Structure
 
 The project consists of:
-- **Main analysis**: `sb2111-people-over-parking.Rmd` (~495 lines) - Thin orchestration layer
-- **Modular functions**: `R/` directory (13 modules, ~3,800 lines) - Reusable, documented functions
+- **Main analysis**: `sb2111-people-over-parking.Rmd` (~606 lines) - Thin orchestration layer
+- **Modular functions**: `R/` directory (14 modules, ~4,000 lines) - Reusable, documented functions
 - **Testing infrastructure**: `tests/testthat/` - Unit and integration tests (in development)
 
-The main Rmd is a **thin orchestration layer** (62.7% reduction from original 1,330 lines) that:
+The main Rmd is a **thin orchestration layer** (54% reduction from original 1,330 lines) that:
 1. Sources modular R functions from `R/` directory
 2. Calls high-level orchestration functions with simple, readable code
 3. Displays results with minimal inline logic
 
 #### R/ Module Organization
+
+**Configuration Module (1)** - Centralized agency configuration:
+- **`agency_metadata.R`** - Single source of truth for all 14 transit agencies (display names, colors, GTFS URLs, rail service types, geographic filters)
 
 **Foundation Modules (7)** - Low-level functions for specific tasks:
 - **`gtfs_download.R`** - Download GTFS data with caching
@@ -69,7 +73,7 @@ See [R/README.md](R/README.md) for detailed module documentation.
 1. **`setup`** - knitr configuration
 2. **`packages`** - Dependency installation and loading
 3. **`load_existing_data`** - Source all R/ modules
-4. **`download_gtfs`** - `process_all_gtfs_data()` - Download, normalize, validate 6 agencies (32 lines, was 145)
+4. **`download_gtfs`** - `process_all_gtfs_data()` - Download, normalize, validate 14 agencies (32 lines, was 145)
 5. **`explore_direction_data`** - Check direction_id availability across agencies
 6. **`process_hubs_UPDATED`** - `identify_all_hubs()` - Identify all transit hubs (11 lines, was 384)
 7. **`process_corridors_and_buffers`** - Identify corridors and create buffers (30 lines, was 143)
@@ -80,7 +84,7 @@ See [R/README.md](R/README.md) for detailed module documentation.
 ### Data Flow (Simplified with High-Level Functions)
 
 ```
-GTFS Data (6 agencies: CTA, Pace, Metra, Metro STL, CUMTD, RMTD)
+GTFS Data (14 agencies across Illinois)
     ↓
     ↓ process_all_gtfs_data() [R/gtfs_processing.R]
     ↓   ├─ Downloads all agencies
@@ -130,12 +134,12 @@ Interactive HTML Map + Summary Statistics
 **Key Improvements**:
 - Each major step is now a single function call
 - All validation happens automatically within orchestration functions
-- Notebook reduced from 1,330 lines to 495 lines (62.7% reduction)
+- Notebook reduced from 1,330 lines to 606 lines (54% reduction)
 - Complex logic is hidden in well-documented, testable modules
 
 ### Data Sources
 
-- **GTFS feeds**: Cached in `gtfs_cache/` directory (5 zip files)
+- **GTFS feeds**: Cached in `gtfs_cache/` directory (14 zip files)
 - **Geographic data**: US Census TIGER/Line shapefiles via `tigris` package
 - **Output**: Self-contained HTML with embedded Leaflet map
 
@@ -239,7 +243,7 @@ Validation catches:
 
 ## Code Quality Improvements
 
-**Recent Enhancements** (December 2024 - January 2025):
+**Recent Enhancements** (December 2024 - November 2025):
 
 **Phase 1 - Foundation Modules** (December 2024):
 1. **Modularization**: Extracted 2500+ lines of code into 7 reusable R modules
@@ -250,14 +254,18 @@ Validation catches:
 
 **Phase 2 - Orchestration & Simplification** (January 2025):
 1. **High-Level Workflows**: Created 6 orchestration modules combining foundation functions
-2. **Notebook Simplification**: Reduced main Rmd from 1,330 lines to 495 lines (62.7% reduction)
+2. **Notebook Simplification**: Reduced main Rmd from 1,330 lines to 606 lines (54% reduction)
 3. **Code Reusability**: Major processing steps now single function calls
 4. **Improved Readability**: Inline logic replaced with well-named function calls
 5. **Maintained Functionality**: Full integration test confirms identical output
 
+**Phase 3 - Statewide Expansion** (November 2025):
+1. **Agency Expansion**: Added 8 new transit agencies across Illinois (6 → 14 total)
+2. **Centralized Configuration**: Created agency_metadata.R module as single source of truth
+3. **Statewide Coverage**: Expanded from Chicago metro to comprehensive Illinois coverage
+
 **Total Impact**:
-- **13 modules** with ~3,800 lines of documented, reusable code
-- **835 lines** moved from notebook to modules
+- **14 modules** with ~4,000 lines of documented, reusable code
 - **Major chunks simplified**: download_gtfs (-78%), process_hubs (-97%), create_map (-90%)
 - All functions fully documented with roxygen2
 - Code reusability across transit analysis projects
@@ -271,4 +279,5 @@ Validation catches:
 - **[R/README.md](R/README.md)** - Comprehensive module documentation and usage guide
 - [docs/gtfs_normalization_strategy.md](docs/gtfs_normalization_strategy.md) - Detailed methodology for GTFS processing
 - [docs/bus_transit_hub_verification_summary.md](docs/bus_transit_hub_verification_summary.md) - Bus hub qualification verification
+- [docs/new_agencies_feed_characteristics.md](docs/new_agencies_feed_characteristics.md) - Characteristics of 8 new transit agencies
 - [README.md](README.md) - Project documentation and context

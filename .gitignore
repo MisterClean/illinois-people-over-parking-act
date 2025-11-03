@@ -8,6 +8,7 @@ data/
 !docs/*.html
 people_over_parking_map.html
 people_over_parking_static_map.png
+*.Rproj
 *.Rproj.user/
 .Rhistory
 .RData

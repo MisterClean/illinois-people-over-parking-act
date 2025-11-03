@@ -60,7 +60,7 @@ get_agency_metadata <- function() {
       id = "pace",
       name = "Pace",
       full_name = "Pace Suburban Bus",
-      url = "https://www.pacebus.com/sites/default/files/2025-02/GTFS.zip",
+      url = "https://www.pacebus.com/gtfsdownload",
       color = "#814C9E",  # Purple
       has_rail = FALSE,
       rail_type = NULL,
