@@ -4,9 +4,11 @@ This directory contains modular R functions extracted from the main analysis not
 
 ## Module Organization
 
-### 📥 **Data Acquisition** (`gtfs_download.R`, `gtfs_normalize.R`)
+### 📥 **Data Acquisition & Processing** (`gtfs_download.R`, `gtfs_normalize.R`, `gtfs_processing.R`)
 
-**Purpose**: Download, extract, and normalize GTFS data from multiple transit agencies
+**Purpose**: Download, extract, normalize, and process GTFS data from multiple transit agencies
+
+#### Low-Level Functions (`gtfs_download.R`, `gtfs_normalize.R`)
 
 **Key Functions**:
 - `download_and_extract_gtfs()` - Downloads GTFS ZIP files with caching and error recovery
@@ -28,6 +30,40 @@ cta_data <- read_normalize_gtfs("cta", cta_dir)
 - Unique ID prefixing (e.g., `cta_1234`, `pace_5678`) to prevent collisions
 - Handles integer64 and missing field issues across agencies
 - Reads both `calendar.txt` and `calendar_dates.txt` to support different GTFS scheduling approaches
+
+#### High-Level Orchestration (`gtfs_processing.R`)
+
+**Key Functions**:
+- `process_all_gtfs_data()` - Complete GTFS workflow: download, normalize, validate, combine
+- `combine_gtfs_tables()` - Combines GTFS tables from multiple agencies
+- `enrich_stop_times()` - Adds route_type and cleans times
+- `standardize_calendar_columns()` - Standardizes calendar table structure
+- `convert_integer64()` - Handles integer64 conversion issues
+
+**Usage**:
+```r
+source("R/gtfs_processing.R")
+
+# Process all agencies in one call
+agency_configs <- list(
+  list(name = "cta", url = "https://..."),
+  list(name = "pace", url = "https://..."),
+  list(name = "metra", url = "https://...")
+)
+
+gtfs_data <- process_all_gtfs_data(agency_configs, validate = TRUE)
+
+# Access combined data
+all_stops <- gtfs_data$all_stops
+all_routes <- gtfs_data$all_routes
+all_stop_times <- gtfs_data$all_stop_times
+```
+
+**Benefits**:
+- Single function call replaces ~145 lines of inline code
+- Automatic validation with comprehensive reporting
+- Consistent data structure across all agencies
+- Returns both combined data and individual agency datasets
 
 ---
 
@@ -232,33 +268,229 @@ group_cols <- determine_grouping_cols(bus_trips, c("cluster_id", "agency"))
 
 ---
 
+### 🚇 **Hub Processing** (`hub_processing.R`)
+
+**Purpose**: Complete workflow for identifying qualifying transit hubs (rail + bus)
+
+**Key Functions**:
+- `identify_all_hubs()` - Complete hub identification workflow (rail + bus)
+- `identify_rail_hubs()` - Identifies all rail transit stations
+- `identify_bus_hubs()` - Complete bus hub workflow with clustering and verification
+- `prepare_peak_stop_times()` - Filters to AM/PM peak periods
+- `calculate_bus_hub_metrics()` - Calculates frequency metrics and applies qualification
+- `format_hub_diagnostics()` - Adds departure times, route lists, and directions
+- `format_itime()` - Converts ITime to 12-hour format
+
+**Usage**:
+```r
+source("R/hub_processing.R")
+
+# Complete hub identification in one call
+hub_results <- identify_all_hubs(
+  all_stops, all_routes, all_trips,
+  all_stop_times, all_calendar, all_calendar_dates
+)
+
+# Access results
+all_hubs_sf <- hub_results$all_hubs_sf
+am_peak_bus_stops <- hub_results$am_peak_bus_stops
+pm_peak_bus_stops <- hub_results$pm_peak_bus_stops
+```
+
+**Benefits**:
+- Single function call replaces ~384 lines of inline code
+- Handles both rail and bus hub identification
+- Includes spatial clustering (150 ft radius)
+- Verifies route overlap at intersections
+- Returns peak stop times for corridor processing
+
+---
+
+### 🛣️ **Corridor Processing** (`corridor_processing.R`)
+
+**Purpose**: Identify qualifying transit corridors and create buffered geometries
+
+**Key Functions**:
+- `identify_qualifying_corridors()` - Complete corridor qualification workflow
+- `create_corridor_buffers()` - Creates 1/8 mile buffers along streets
+- `download_tiger_streets()` - Downloads TIGER/Line street data
+- `calculate_corridor_metrics()` - Calculates AM/PM frequency metrics
+
+**Usage**:
+```r
+source("R/corridor_processing.R")
+
+# Identify qualifying corridors
+corridors_sf <- identify_qualifying_corridors(
+  all_stops, am_peak_bus_stops, pm_peak_bus_stops
+)
+
+# Create buffered corridor geometries
+corridor_buffers <- create_corridor_buffers(
+  corridors_sf, illinois_boundary
+)
+```
+
+**Benefits**:
+- Single function call replaces ~143 lines of inline code
+- Automatic street network download from US Census
+- Snaps stops to nearest street segments
+- Creates 1/8 mile (660 ft) buffers along qualifying streets
+- Clips results to Illinois boundary
+
+---
+
+### 📍 **Buffer Processing** (`buffer_processing.R`)
+
+**Purpose**: Create buffers around transit hubs and combine with corridors
+
+**Key Functions**:
+- `create_hub_buffers()` - Creates 1/2 mile buffers around hubs by agency
+- `create_combined_buffers()` - Combines hub and corridor buffers
+
+**Usage**:
+```r
+source("R/buffer_processing.R")
+
+# Create hub buffers (1/2 mile)
+hub_buffers <- create_hub_buffers(all_hubs_sf, illinois_boundary)
+
+# Access agency-specific buffers
+cta_hubs <- hub_buffers$cta_hubs_union
+pace_hubs <- hub_buffers$pace_hubs_union
+
+# Combine all affected areas
+all_affected <- create_combined_buffers(
+  hub_buffers$all_hub_areas,
+  corridor_buffers,
+  illinois_boundary
+)
+```
+
+**Benefits**:
+- Separates hub buffers by agency for layered visualization
+- Clips all buffers to Illinois boundary
+- Returns both individual and combined geometries
+- Handles empty agency datasets gracefully
+
+---
+
+### 🗺️ **Map Creation** (`map_creation.R`)
+
+**Purpose**: Create interactive Leaflet maps with transit hubs and corridors
+
+**Key Functions**:
+- `create_interactive_map()` - Creates complete Leaflet map with all layers
+- `get_agency_color_palette()` - Returns standardized agency colors
+- `create_hub_popup_html()` - Formats popup content for hubs
+
+**Usage**:
+```r
+source("R/map_creation.R")
+
+# Create interactive map
+map <- create_interactive_map(
+  all_hubs_sf,
+  all_affected_areas_combined,
+  cta_hubs_union, pace_hubs_union, metra_hubs_union,
+  metro_stl_hubs_union, cumtd_hubs_union, rmtd_hubs_union,
+  all_corridors_union_wgs84,
+  center_lng = -87.6079,
+  center_lat = 41.8917,
+  zoom = 9
+)
+
+# Display map
+map
+```
+
+**Benefits**:
+- Single function call replaces ~186 lines of inline code
+- Standardized agency color scheme
+- Rich popup information for transit hubs
+- Layer controls for toggling agencies
+- Full-screen and measurement tools included
+
+---
+
+### 📊 **Summary Statistics** (`summary_stats.R`)
+
+**Purpose**: Generate comprehensive summary statistics for reporting
+
+**Key Functions**:
+- `generate_summary_statistics()` - Calculates all summary statistics by agency
+
+**Usage**:
+```r
+source("R/summary_stats.R")
+
+# Generate all statistics
+stats <- generate_summary_statistics(all_hubs_sf, qualifying_corridor_stops_sf)
+
+# Access agency-specific stats
+cta_hub_stats <- stats$cta_hub
+pace_corridor_stats <- stats$pace_corridor
+rail_hub_count <- stats$rail_hub_count
+```
+
+**Benefits**:
+- Single function call replaces ~34 lines of inline code
+- Returns statistics for all agencies in consistent format
+- Handles missing agencies gracefully
+- Provides data for inline R code in Rmd output
+
+---
+
 ## Module Dependencies
 
+### Low-Level Modules (Foundation)
 ```
-gtfs_download.R
-gtfs_normalize.R
+gtfs_download.R ──────────┐
+gtfs_normalize.R ─────────┤
+gtfs_validate.R ──────────├─→ gtfs_processing.R (high-level orchestration)
+                         │
+spatial_validate.R ───────┤
+spatial_clustering.R ─────┤
+frequency_calc.R ─────────┤
+hub_identification.R ─────┘
+```
+
+### High-Level Orchestration Modules
+```
+gtfs_processing.R
     ↓
-gtfs_validate.R (validates normalized data)
-    ↓
-hub_identification.R (identifies stations/routes)
-    ↓
-frequency_calc.R (calculates frequencies)
-    ↓
-spatial_clustering.R (clusters stops)
-    ↓
-spatial_validate.R (validates spatial operations)
+hub_processing.R ──────→ corridor_processing.R
+    ↓                           ↓
+    └──────→ buffer_processing.R
+                    ↓
+            map_creation.R
+            summary_stats.R
 ```
 
 **Loading Order** (in `sb2111-people-over-parking.Rmd`):
 ```r
+# Low-level modules (foundation)
 source("R/gtfs_download.R")
 source("R/gtfs_normalize.R")
 source("R/gtfs_validate.R")
+source("R/gtfs_processing.R")        # NEW: High-level GTFS orchestration
 source("R/spatial_validate.R")
 source("R/spatial_clustering.R")
 source("R/frequency_calc.R")
 source("R/hub_identification.R")
+
+# High-level orchestration modules (NEW)
+source("R/hub_processing.R")         # Complete hub identification workflow
+source("R/corridor_processing.R")    # Corridor qualification & buffering
+source("R/buffer_processing.R")      # Buffer creation & combination
+source("R/map_creation.R")           # Interactive map generation
+source("R/summary_stats.R")          # Summary statistics
 ```
+
+**Module Categories**:
+- **Foundation (7 modules)**: Low-level functions for specific tasks
+- **Orchestration (6 modules)**: High-level workflows that combine foundation modules
+- **Total**: 13 modules (~3,800 lines of documented, reusable code)
 
 ---
 

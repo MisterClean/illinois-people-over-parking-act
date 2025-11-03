@@ -34,76 +34,104 @@ install.packages(required_packages)
 ### Code Structure
 
 The project consists of:
-- **Main analysis**: `sb2111-people-over-parking.Rmd` (~1330 lines) - Orchestrates the complete workflow
-- **Modular functions**: `R/` directory (7 modules, ~2500 lines) - Reusable, documented functions
+- **Main analysis**: `sb2111-people-over-parking.Rmd` (~495 lines) - Thin orchestration layer
+- **Modular functions**: `R/` directory (13 modules, ~3,800 lines) - Reusable, documented functions
 - **Testing infrastructure**: `tests/testthat/` - Unit and integration tests (in development)
 
-The main Rmd is now a **thin orchestration layer** that:
+The main Rmd is a **thin orchestration layer** (62.7% reduction from original 1,330 lines) that:
 1. Sources modular R functions from `R/` directory
-2. Runs data quality validation
-3. Executes the analysis pipeline
-4. Generates interactive visualizations
+2. Calls high-level orchestration functions with simple, readable code
+3. Displays results with minimal inline logic
 
 #### R/ Module Organization
 
-**Data Acquisition & Validation** (4 modules):
+**Foundation Modules (7)** - Low-level functions for specific tasks:
 - **`gtfs_download.R`** - Download GTFS data with caching
 - **`gtfs_normalize.R`** - Normalize GTFS tables across agencies
 - **`gtfs_validate.R`** - Validate GTFS data quality (structure, coordinates, relationships)
 - **`spatial_validate.R`** - Validate spatial operations (geometries, transformations, buffers)
-
-**Analysis & Processing** (3 modules):
 - **`hub_identification.R`** - Identify rail stations and filter bus routes per agency
 - **`spatial_clustering.R`** - Cluster stops spatially and verify route overlaps
 - **`frequency_calc.R`** - Calculate service frequencies and apply SB2111 criteria
 
+**Orchestration Modules (6)** - High-level workflows combining foundation modules:
+- **`gtfs_processing.R`** - Complete GTFS workflow: download, normalize, validate, combine
+- **`hub_processing.R`** - Complete hub identification workflow (rail + bus with clustering)
+- **`corridor_processing.R`** - Corridor qualification and street buffering
+- **`buffer_processing.R`** - Hub/corridor buffer creation and combination
+- **`map_creation.R`** - Interactive Leaflet map generation
+- **`summary_stats.R`** - Comprehensive summary statistics
+
 See [R/README.md](R/README.md) for detailed module documentation.
 
-#### Main Rmd Chunks
+#### Main Rmd Chunks (Simplified)
 
 1. **`setup`** - knitr configuration
 2. **`packages`** - Dependency installation and loading
-3. **`load_existing_data`** - Source R/ modules
-4. **`download_gtfs`** - Download from 5 agencies, normalize, **validate**, combine data
+3. **`load_existing_data`** - Source all R/ modules
+4. **`download_gtfs`** - `process_all_gtfs_data()` - Download, normalize, validate 6 agencies (32 lines, was 145)
 5. **`explore_direction_data`** - Check direction_id availability across agencies
-6. **`cluster_stops`** - Load clustering functions (defined in R/spatial_clustering.R)
-7. **`process_hubs_UPDATED`** - Identify qualifying transit hubs (rail stations + bus hubs with overlap verification)
-8. **`process_corridors_and_buffers`** - Identify corridors and create spatial buffers
-9. **`calculate_areas`** - Calculate area coverage in square miles
-10. **`create_map`** - Generate interactive Leaflet map with layers
-11. **`summary_stats`** - Statistical summaries
+6. **`process_hubs_UPDATED`** - `identify_all_hubs()` - Identify all transit hubs (11 lines, was 384)
+7. **`process_corridors_and_buffers`** - Identify corridors and create buffers (30 lines, was 143)
+8. **`calculate_areas`** - Calculate area coverage in square miles
+9. **`create_map`** - `create_interactive_map()` - Generate Leaflet map (19 lines, was 186)
+10. **`summary_stats`** - `generate_summary_statistics()` - All summaries (24 lines, was 34)
 
-### Data Flow
+### Data Flow (Simplified with High-Level Functions)
 
 ```
-GTFS Data (5 agencies: CTA, Pace, Metra, Metro STL, CUMTD)
-    ↓ download_and_extract_gtfs() [R/gtfs_download.R]
-    ↓ read_normalize_gtfs() [R/gtfs_normalize.R] - reads calendar.txt + calendar_dates.txt
-    ↓ ✓ VALIDATION: validate_all_gtfs() [R/gtfs_validate.R]
+GTFS Data (6 agencies: CTA, Pace, Metra, Metro STL, CUMTD, RMTD)
+    ↓
+    ↓ process_all_gtfs_data() [R/gtfs_processing.R]
+    ↓   ├─ Downloads all agencies
+    ↓   ├─ Normalizes tables (unique IDs, calendar handling)
+    ↓   ├─ ✓ Validates data quality
+    ↓   └─ Combines into unified tables
+    ↓
 Combined GTFS tables (stops, routes, trips, stop_times, calendar, calendar_dates)
-    ↓ identify_weekday_services() [R/hub_identification.R] - supports both calendar approaches
-    ↓ identify_bus_routes() [R/hub_identification.R]
-    ↓ filter_peak_period_stop_times() [R/frequency_calc.R]
-    ↓ Split analysis by AM/PM peaks (7-9am, 4-6pm)
-Transit Hubs (rail + bus)
-    ↓ identify_all_rail_stations() [R/hub_identification.R]
-    ↓ cluster_stops_spatial() [R/spatial_clustering.R] - 150ft radius
-    ↓ verify_route_overlap_at_cluster() [R/spatial_clustering.R] - street name matching
-    ↓ calculate_peak_frequency() [R/frequency_calc.R]
-    ↓ apply_hub_qualification() [R/frequency_calc.R]
-    ↓ ✓ VALIDATION: validate_geometries() [R/spatial_validate.R]
-    ↓ Buffer 1/2 mile (2640 ft)
-    ↓ ✓ VALIDATION: validate_buffer_result() [R/spatial_validate.R]
-Transit Corridors
-    ↓ Snap to street network (TIGER/Line)
-    ↓ Buffer 1/8 mile (660 ft)
-    ↓ apply_corridor_qualification() [R/frequency_calc.R]
-Combined Areas
-    ↓ ✓ VALIDATION: validate_coordinate_transform() [R/spatial_validate.R]
-    ↓ Clip to Illinois boundary
-    ↓ ✓ VALIDATION: validate_illinois_bounds() [R/spatial_validate.R]
-Interactive Leaflet Map (HTML output)
+    ↓
+    ↓ identify_all_hubs() [R/hub_processing.R]
+    ↓   ├─ Identifies rail stations (CTA, Metra, Metro STL)
+    ↓   ├─ Identifies weekday services (calendar.txt + calendar_dates.txt)
+    ↓   ├─ Filters to AM/PM peak periods (7-9am, 4-6pm)
+    ↓   ├─ Clusters bus stops spatially (150ft radius)
+    ↓   ├─ Verifies route overlap (street name matching)
+    ↓   ├─ Calculates frequency metrics (AM & PM)
+    ↓   └─ Applies qualification criteria (2+ routes, ≤15 min)
+    ↓
+Transit Hubs (rail + qualifying bus hubs)
+    ↓
+    ├──→ create_hub_buffers() [R/buffer_processing.R]
+    │      └─ Creates 1/2 mile (2640 ft) buffers by agency
+    │
+    └──→ identify_qualifying_corridors() [R/corridor_processing.R]
+           ├─ Calculates corridor frequencies (1+ route, ≤15 min)
+           └─ create_corridor_buffers()
+              ├─ Downloads TIGER/Line street network
+              ├─ Snaps stops to nearest streets
+              └─ Creates 1/8 mile (660 ft) buffers
+    ↓
+Hub Buffers + Corridor Buffers
+    ↓
+    ↓ create_combined_buffers() [R/buffer_processing.R]
+    ↓   ├─ Combines all affected areas
+    ↓   └─ Clips to Illinois boundary
+    ↓
+Combined Affected Areas + Hub Points
+    ↓
+    ↓ create_interactive_map() [R/map_creation.R]
+    ↓   ├─ Builds Leaflet map with layers
+    ↓   ├─ Adds agency-specific colors & controls
+    ↓   └─ Creates rich popups for hubs
+    ↓
+Interactive HTML Map + Summary Statistics
 ```
+
+**Key Improvements**:
+- Each major step is now a single function call
+- All validation happens automatically within orchestration functions
+- Notebook reduced from 1,330 lines to 495 lines (62.7% reduction)
+- Complex logic is hidden in well-documented, testable modules
 
 ### Data Sources
 
@@ -213,13 +241,25 @@ Validation catches:
 
 **Recent Enhancements** (December 2024 - January 2025):
 
+**Phase 1 - Foundation Modules** (December 2024):
 1. **Modularization**: Extracted 2500+ lines of code into 7 reusable R modules
 2. **Validation**: Added comprehensive GTFS and spatial validation (11 functions)
 3. **Documentation**: 100% roxygen2 coverage on extracted functions
 4. **Testing Infrastructure**: Created testthat framework (tests in development)
 5. **Error Handling**: Improved error messages and recovery strategies
 
-**Benefits**:
+**Phase 2 - Orchestration & Simplification** (January 2025):
+1. **High-Level Workflows**: Created 6 orchestration modules combining foundation functions
+2. **Notebook Simplification**: Reduced main Rmd from 1,330 lines to 495 lines (62.7% reduction)
+3. **Code Reusability**: Major processing steps now single function calls
+4. **Improved Readability**: Inline logic replaced with well-named function calls
+5. **Maintained Functionality**: Full integration test confirms identical output
+
+**Total Impact**:
+- **13 modules** with ~3,800 lines of documented, reusable code
+- **835 lines** moved from notebook to modules
+- **Major chunks simplified**: download_gtfs (-78%), process_hubs (-97%), create_map (-90%)
+- All functions fully documented with roxygen2
 - Code reusability across transit analysis projects
 - Automated data quality validation
 - Easier debugging and maintenance
