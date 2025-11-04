@@ -200,58 +200,100 @@ convert_shapes_to_linestrings <- function(all_shapes) {
   return(shapes_sf)
 }
 
-#' Create Corridor Buffers
+#' Create Corridor Buffers Using GTFS Route Shapes
 #'
-#' Creates 1/8 mile (660 ft) buffers around qualifying corridor street segments.
-#' Snaps corridor stops to nearest street segments, then buffers and unions
-#' the qualifying streets.
+#' Creates 1/8 mile (660 ft) buffers around actual transit route paths using
+#' GTFS shapes.txt geometry. This approach buffers only the portions of routes
+#' where frequent service actually operates, rather than entire street segments.
 #'
 #' @param qualifying_corridor_stops_sf sf object with qualifying corridor stops
+#' @param all_stop_times data.table with all stop_times (to link stops to trips)
+#' @param all_trips data.table with all trips (must include unique_shape_id)
+#' @param all_shapes data.table with GTFS shapes data
 #' @param illinois_boundary sf object with Illinois state boundary
-#' @param counties_fips Vector of county FIPS codes for street data (default: Illinois transit counties)
-#' @param year Year for TIGER/Line data (default: 2023)
 #' @return sf object with buffered corridor geometry (WGS84)
+#'
+#' @details
+#' This function:
+#' \enumerate{
+#'   \item Identifies trips serving qualifying corridor stops
+#'   \item Extracts unique shape IDs from those trips
+#'   \item Converts qualifying shapes to LINESTRING geometries
+#'   \item Buffers each route path by 660 feet (1/8 mile)
+#'   \item Unions overlapping buffers
+#'   \item Clips to Illinois boundary
+#' }
+#'
+#' The shapes-based approach is more accurate than street network approximation
+#' because it uses the actual paths vehicles travel, including highways,
+#' expressways, and complex routing not well-represented in TIGER/Line data.
 #'
 #' @examples
 #' \dontrun{
-#' corridor_buffer <- create_corridor_buffers(qualifying_corridor_stops_sf, illinois_boundary)
+#' corridor_buffer <- create_corridor_buffers(
+#'   qualifying_corridor_stops_sf,
+#'   all_stop_times,
+#'   all_trips,
+#'   all_shapes,
+#'   illinois_boundary
+#' )
 #' }
 create_corridor_buffers <- function(qualifying_corridor_stops_sf,
-                                    illinois_boundary,
-                                    counties_fips = c("031", "043", "089", "097", "111", "197",  # Chicago metro
-                                                      "163", "119", "133",                        # St. Louis IL
-                                                      "019",                                      # Champaign-Urbana
-                                                      "201"),                                     # Rockford
-                                    year = 2023) {
-  cat("\n=== Creating Corridor Buffers ===\n\n")
+                                    all_stop_times,
+                                    all_trips,
+                                    all_shapes,
+                                    illinois_boundary) {
+  cat("\n=== Creating Corridor Buffers from GTFS Shapes ===\n\n")
 
-  # Download street network data
-  all_streets_sf <- download_tiger_streets(counties_fips, year)
+  # Extract unique_stop_ids from qualifying corridor stops
+  qualifying_stop_ids <- unique(qualifying_corridor_stops_sf$unique_stop_id)
+  cat(sprintf("Qualifying corridor stops: %d\n", length(qualifying_stop_ids)))
 
-  # Project streets to IL State Plane (feet) for buffering and snapping
-  all_streets_projected <- st_transform(all_streets_sf, 3435)
+  # Find trips that serve qualifying corridor stops
+  # Link stops → stop_times → trips → shapes
+  cat("Finding trips that serve qualifying corridor stops...\n")
+  corridor_stop_times <- all_stop_times[unique_stop_id %in% qualifying_stop_ids]
+  cat(sprintf("Stop time records at qualifying stops: %s\n",
+              format(nrow(corridor_stop_times), big.mark = ",")))
 
-  # Snap qualifying stops to nearest street segment
-  cat("Snapping corridor stops to street network...\n")
-  qualifying_stops_projected <- st_transform(qualifying_corridor_stops_sf, 3435)
+  # Get unique trip IDs from these stop_times
+  qualifying_trip_ids <- unique(corridor_stop_times$unique_trip_id)
+  cat(sprintf("Trips serving qualifying stops: %s\n",
+              format(length(qualifying_trip_ids), big.mark = ",")))
 
-  # Find the index of the nearest street for each stop
-  nearest_street_index <- st_nearest_feature(qualifying_stops_projected, all_streets_projected)
+  # Join with trips to get shape_ids
+  corridor_trips <- all_trips[unique_trip_id %in% qualifying_trip_ids]
 
-  # Get the unique IDs (LINEARID) of the qualifying street segments
-  qualifying_street_ids <- unique(all_streets_projected$LINEARID[nearest_street_index])
+  # Filter to trips that have shape data
+  corridor_trips_with_shapes <- corridor_trips[!is.na(unique_shape_id) & unique_shape_id != ""]
+  cat(sprintf("Trips with shape data: %s\n",
+              format(nrow(corridor_trips_with_shapes), big.mark = ",")))
 
-  # Select the qualifying street segments
-  qualifying_corridors_projected <- all_streets_projected[all_streets_projected$LINEARID %in% qualifying_street_ids, ]
+  # Get unique shape IDs
+  qualifying_shape_ids <- unique(corridor_trips_with_shapes$unique_shape_id)
+  cat(sprintf("Unique route shapes to buffer: %d\n", length(qualifying_shape_ids)))
 
-  cat(sprintf("Identified %d qualifying street segments\n", nrow(qualifying_corridors_projected)))
+  # Filter shapes to only qualifying shape IDs
+  qualifying_shapes <- all_shapes[unique_shape_id %in% qualifying_shape_ids]
+  cat(sprintf("Shape points to process: %s\n",
+              format(nrow(qualifying_shapes), big.mark = ",")))
 
-  # Buffer corridors (1/8 mile = 660 feet)
-  cat("Creating 1/8 mile buffers around corridors...\n")
-  corridor_buffers_projected <- st_buffer(qualifying_corridors_projected, 660)
-  all_corridors_union <- st_union(corridor_buffers_projected)
+  # Convert shapes to LINESTRING geometries
+  shapes_sf <- convert_shapes_to_linestrings(qualifying_shapes)
+
+  # Project to Illinois State Plane (feet) for accurate buffering
+  cat("Buffering route geometries by 1/8 mile (660 feet)...\n")
+  shapes_projected <- st_transform(shapes_sf, 3435)
+
+  # Buffer each shape by 660 feet (1/8 mile)
+  corridor_buffers <- st_buffer(shapes_projected, 660)
+
+  # Union all buffers
+  cat("Unioning corridor buffers...\n")
+  all_corridors_union <- st_union(corridor_buffers)
 
   # Transform back to WGS84 and clip to Illinois boundary
+  cat("Clipping to Illinois boundary...\n")
   all_corridors_union_wgs84_raw <- st_transform(all_corridors_union, 4326)
   all_corridors_union_wgs84 <- st_intersection(all_corridors_union_wgs84_raw, illinois_boundary)
 
