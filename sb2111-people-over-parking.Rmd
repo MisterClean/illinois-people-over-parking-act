@@ -111,6 +111,7 @@ all_trips <- gtfs_data$all_trips
 all_stop_times <- gtfs_data$all_stop_times
 all_calendar <- gtfs_data$all_calendar
 all_calendar_dates <- gtfs_data$all_calendar_dates
+all_shapes <- gtfs_data$all_shapes
 validation_results <- gtfs_data$validation_results
 
 # Individual agency data available via gtfs_data$agency_data[[agency_id]]
@@ -212,9 +213,13 @@ qualifying_corridor_stops_sf <- identify_qualifying_corridors(
   all_stops, am_peak_bus_stops, pm_peak_bus_stops
 )
 
-# Create corridor buffers (1/8 mile along street segments)
+# Create corridor buffers (1/8 mile along actual route geometry from GTFS shapes)
 all_corridors_union_wgs84 <- create_corridor_buffers(
-  qualifying_corridor_stops_sf, illinois_boundary
+  qualifying_corridor_stops_sf,
+  all_stop_times,
+  all_trips,
+  all_shapes,
+  illinois_boundary
 )
 
 # Create hub buffers (1/2 mile around hubs)
