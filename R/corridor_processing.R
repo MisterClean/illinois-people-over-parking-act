@@ -1,10 +1,11 @@
 # Corridor Processing Functions
 #
 # Functions for identifying qualifying transit corridors and creating
-# corridor buffers along street segments.
+# corridor buffers along actual transit route geometry.
 #
 # High-Level Functions:
 #   - identify_qualifying_corridors(): Complete corridor qualification workflow
+#   - convert_shapes_to_linestrings(): Convert GTFS shapes to route geometry
 #   - create_corridor_buffers(): Create buffered corridor geometries
 #
 # Helper Functions:
@@ -120,6 +121,83 @@ identify_qualifying_corridors <- function(all_stops, am_peak_bus_stops, pm_peak_
   )
 
   return(qualifying_corridor_stops_sf)
+}
+
+#' Convert GTFS Shapes to LINESTRING Geometries
+#'
+#' Converts GTFS shapes.txt data (sequences of lat/lon points) into sf
+#' LINESTRING geometries representing actual transit route paths. Each
+#' unique_shape_id becomes one LINESTRING feature.
+#'
+#' @param all_shapes data.table with GTFS shapes data containing:
+#'   unique_shape_id, shape_pt_lat, shape_pt_lon, shape_pt_sequence
+#' @return sf object with LINESTRING geometries (one per unique_shape_id) in WGS84
+#'
+#' @details
+#' GTFS shapes represent the actual path vehicles travel, defined as ordered
+#' sequences of latitude/longitude points. This function:
+#' \enumerate{
+#'   \item Groups shape points by unique_shape_id
+#'   \item Orders points within each shape by shape_pt_sequence
+#'   \item Converts each point sequence to a LINESTRING geometry
+#'   \item Returns sf object ready for spatial operations
+#' }
+#'
+#' Empty or single-point shapes are filtered out as they cannot form valid
+#' LINESTRING geometries (minimum 2 points required).
+#'
+#' @examples
+#' \dontrun{
+#' shapes_sf <- convert_shapes_to_linestrings(all_shapes)
+#' # Result has one row per shape with LINESTRING geometry
+#' }
+convert_shapes_to_linestrings <- function(all_shapes) {
+  cat("\n=== Converting GTFS Shapes to LINESTRING Geometries ===\n\n")
+
+  # Filter to non-empty shapes and order by sequence
+  shapes_ordered <- all_shapes[!is.na(unique_shape_id) & !is.na(shape_pt_lat) & !is.na(shape_pt_lon)]
+  setorder(shapes_ordered, unique_shape_id, shape_pt_sequence)
+
+  # Split into list by unique_shape_id
+  shapes_list <- split(shapes_ordered, by = "unique_shape_id")
+
+  cat(sprintf("Processing %d unique shapes...\n", length(shapes_list)))
+
+  # Convert each shape to LINESTRING
+  linestrings_list <- lapply(names(shapes_list), function(shape_id) {
+    shape_points <- shapes_list[[shape_id]]
+
+    # Need at least 2 points for a valid LINESTRING
+    if (nrow(shape_points) < 2) {
+      return(NULL)
+    }
+
+    # Extract coordinates as matrix (lon, lat order for sf)
+    coords <- as.matrix(shape_points[, .(shape_pt_lon, shape_pt_lat)])
+
+    # Create LINESTRING geometry
+    linestring <- st_linestring(coords)
+
+    # Return as sf-compatible data.frame
+    data.frame(
+      unique_shape_id = shape_id,
+      agency = shape_points$agency[1],
+      num_points = nrow(shape_points),
+      geometry = st_sfc(linestring, crs = 4326)
+    )
+  })
+
+  # Remove NULL entries (shapes with < 2 points)
+  linestrings_list <- linestrings_list[!sapply(linestrings_list, is.null)]
+
+  # Combine into single sf object
+  shapes_sf <- do.call(rbind, linestrings_list)
+  shapes_sf <- st_as_sf(shapes_sf)
+
+  cat(sprintf("Created %d LINESTRING geometries\n", nrow(shapes_sf)))
+  cat(sprintf("  Total shape points: %s\n", format(sum(shapes_sf$num_points), big.mark = ",")))
+
+  return(shapes_sf)
 }
 
 #' Create Corridor Buffers
