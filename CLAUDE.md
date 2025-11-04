@@ -113,7 +113,7 @@ Transit Hubs (rail + qualifying bus hubs)
            └─ create_corridor_buffers()
               ├─ Links qualifying stops → trips → shapes
               ├─ convert_shapes_to_linestrings() (GTFS route geometry)
-              └─ Creates 1/8 mile (660 ft) buffers along actual routes
+              └─ Creates 680 ft buffers (660 ft + 20 ft street width) from edge
     ↓
 Hub Buffers + Corridor Buffers
     ↓
@@ -174,6 +174,25 @@ Bus stops are grouped into "hubs" using two-stage verification:
 2. **Street name verification**: Parses stop names to verify routes actually intersect at same street location, preventing false positives from parallel routes
 
 See [docs/bus_transit_hub_verification_summary.md](docs/bus_transit_hub_verification_summary.md) for details.
+
+### Corridor Buffer Methodology
+
+Transit corridors use GTFS shapes.txt (actual route geometry) with buffer distance adjusted to measure from street edge rather than centerline:
+
+- **Base distance**: 660 feet (1/8 mile) from street edge per SB2111
+- **Street width adjustment**: +20 feet (conservative half-street-width estimate)
+- **Total buffer**: 680 feet from route centerline
+
+**Street width rationale**:
+- GTFS shapes represent route centerlines (middle of street)
+- Typical half-street-widths (centerline to curb): local streets 10-16 ft, arterials 14-25 ft
+- 20 feet is conservative middle value covering most street types (based on AASHTO standards)
+- Ensures 1/8 mile measurement starts from where riders access transit (curb), not road center
+
+This approach combines:
+1. **Accuracy**: Uses actual vehicle paths from GTFS (not street network approximations)
+2. **Precision**: Only buffers where routes actually run (not entire street segments)
+3. **Statutory compliance**: Measures 1/8 mile from practical access point (street edge)
 
 ### Spatial Reference Systems
 

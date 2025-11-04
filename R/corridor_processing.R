@@ -202,9 +202,10 @@ convert_shapes_to_linestrings <- function(all_shapes) {
 
 #' Create Corridor Buffers Using GTFS Route Shapes
 #'
-#' Creates 1/8 mile (660 ft) buffers around actual transit route paths using
-#' GTFS shapes.txt geometry. This approach buffers only the portions of routes
-#' where frequent service actually operates, rather than entire street segments.
+#' Creates 1/8 mile buffers around actual transit route paths using GTFS
+#' shapes.txt geometry, measured from the street edge rather than centerline.
+#' This approach buffers only the portions of routes where frequent service
+#' actually operates, rather than entire street segments.
 #'
 #' @param qualifying_corridor_stops_sf sf object with qualifying corridor stops
 #' @param all_stop_times data.table with all stop_times (to link stops to trips)
@@ -219,9 +220,16 @@ convert_shapes_to_linestrings <- function(all_shapes) {
 #'   \item Identifies trips serving qualifying corridor stops
 #'   \item Extracts unique shape IDs from those trips
 #'   \item Converts qualifying shapes to LINESTRING geometries
-#'   \item Buffers each route path by 660 feet (1/8 mile)
+#'   \item Buffers each route path by 680 feet (660ft + 20ft for street width)
 #'   \item Unions overlapping buffers
 #'   \item Clips to Illinois boundary
+#' }
+#'
+#' The buffer distance accounts for:
+#' \itemize{
+#'   \item 660 feet (1/8 mile) from street edge per SB2111
+#'   \item 20 feet for typical half-street-width (centerline to curb)
+#'   \item Total: 680 feet from route centerline
 #' }
 #'
 #' The shapes-based approach is more accurate than street network approximation
@@ -282,11 +290,17 @@ create_corridor_buffers <- function(qualifying_corridor_stops_sf,
   shapes_sf <- convert_shapes_to_linestrings(qualifying_shapes)
 
   # Project to Illinois State Plane (feet) for accurate buffering
-  cat("Buffering route geometries by 1/8 mile (660 feet)...\n")
+  cat("Buffering route geometries by 1/8 mile from street edge...\n")
   shapes_projected <- st_transform(shapes_sf, 3435)
 
-  # Buffer each shape by 660 feet (1/8 mile)
-  corridor_buffers <- st_buffer(shapes_projected, 660)
+  # Adjust buffer to measure from street edge rather than route centerline
+  # Add conservative estimate of half-street-width (centerline to curb)
+  # Based on research: local streets 10-16ft, arterials 14-25ft (AASHTO standards)
+  # 20 feet is conservative middle value covering most street types
+  half_street_width <- 20  # feet, centerline to curb
+  buffer_from_edge <- 660 + half_street_width  # 680 feet total
+
+  corridor_buffers <- st_buffer(shapes_projected, buffer_from_edge)
 
   # Union all buffers
   cat("Unioning corridor buffers...\n")
