@@ -59,7 +59,7 @@ library(zip)
 library(httr)
 library(lubridate)
 library(mapview)
-library(tigris) # Added for street network data and state boundaries
+library(tigris) # For Illinois state boundary
 library(kableExtra) # Added for enhanced table formatting
 
 # Disable s2 processing to avoid geometry validation issues
@@ -513,8 +513,8 @@ This analysis incorporates **14 transit agencies** covering major urban areas ac
 
 **Geographic Data:**
 
--   TIGER/Line street network data from U.S. Census Bureau via tigris package
--   Illinois state boundary via tigris package
+-   GTFS shapes.txt from all 14 agencies (actual transit route geometry)
+-   Illinois state boundary via TIGER/Line (tigris package)
 
 **Counties Covered:**
 
