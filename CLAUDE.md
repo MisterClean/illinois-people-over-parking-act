@@ -61,7 +61,7 @@ The main Rmd is a **thin orchestration layer** (54% reduction from original 1,33
 **Orchestration Modules (6)** - High-level workflows combining foundation modules:
 - **`gtfs_processing.R`** - Complete GTFS workflow: download, normalize, validate, combine
 - **`hub_processing.R`** - Complete hub identification workflow (rail + bus with clustering)
-- **`corridor_processing.R`** - Corridor qualification and street buffering
+- **`corridor_processing.R`** - Corridor qualification and route geometry buffering
 - **`buffer_processing.R`** - Hub/corridor buffer creation and combination
 - **`map_creation.R`** - Interactive Leaflet map generation
 - **`summary_stats.R`** - Comprehensive summary statistics
@@ -92,7 +92,7 @@ GTFS Data (14 agencies across Illinois)
     ↓   ├─ ✓ Validates data quality
     ↓   └─ Combines into unified tables
     ↓
-Combined GTFS tables (stops, routes, trips, stop_times, calendar, calendar_dates)
+Combined GTFS tables (stops, routes, trips, stop_times, calendar, calendar_dates, shapes)
     ↓
     ↓ identify_all_hubs() [R/hub_processing.R]
     ↓   ├─ Identifies rail stations (CTA, Metra, Metro STL)
@@ -111,9 +111,9 @@ Transit Hubs (rail + qualifying bus hubs)
     └──→ identify_qualifying_corridors() [R/corridor_processing.R]
            ├─ Calculates corridor frequencies (1+ route, ≤15 min)
            └─ create_corridor_buffers()
-              ├─ Downloads TIGER/Line street network
-              ├─ Snaps stops to nearest streets
-              └─ Creates 1/8 mile (660 ft) buffers
+              ├─ Links qualifying stops → trips → shapes
+              ├─ convert_shapes_to_linestrings() (GTFS route geometry)
+              └─ Creates 1/8 mile (660 ft) buffers along actual routes
     ↓
 Hub Buffers + Corridor Buffers
     ↓
@@ -140,7 +140,8 @@ Interactive HTML Map + Summary Statistics
 ### Data Sources
 
 - **GTFS feeds**: Cached in `gtfs_cache/` directory (14 zip files)
-- **Geographic data**: US Census TIGER/Line shapefiles via `tigris` package
+  - Includes shapes.txt with actual route geometry for all 14 agencies
+- **Geographic data**: US Census state boundary via `tigris` package
 - **Output**: Self-contained HTML with embedded Leaflet map
 
 ## Key Concepts and Conventions
@@ -263,6 +264,13 @@ Validation catches:
 1. **Agency Expansion**: Added 8 new transit agencies across Illinois (6 → 14 total)
 2. **Centralized Configuration**: Created agency_metadata.R module as single source of truth
 3. **Statewide Coverage**: Expanded from Chicago metro to comprehensive Illinois coverage
+
+**Phase 4 - Corridor Buffering Accuracy** (November 2025):
+1. **GTFS Shapes Integration**: Added shapes.txt loading to GTFS processing pipeline
+2. **Route Geometry Buffering**: Replaced TIGER/Line street approximations with actual route paths
+3. **Precision Improvement**: Corridors now only include areas where routes actually traverse
+4. **Dependency Elimination**: Removed external street network data requirements
+5. **Statewide Automation**: No longer requires county-specific configuration
 
 **Total Impact**:
 - **14 modules** with ~4,000 lines of documented, reusable code
