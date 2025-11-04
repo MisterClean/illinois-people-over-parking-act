@@ -467,6 +467,28 @@ This analysis implements the following methodology to identify qualifying transi
 -   If GTFS `direction_id` data is available, routes are analyzed by direction (northbound/southbound, eastbound/westbound)
 -   This provides more accurate service frequency calculations at directional stops
 
+**Corridor Buffering Methodology:**
+
+-   Corridors are identified by finding all bus stops that meet the frequency criteria (1+ routes, ≤15 min interval)
+-   For each qualifying stop, we trace back to the actual transit routes serving that stop:
+    1. Stop → stop_times (all trips visiting that stop)
+    2. Trips → shapes (GTFS route geometry for those trips)
+    3. Extract unique shapes from trips serving qualifying stops
+-   GTFS shapes.txt provides actual vehicle paths as ordered sequences of latitude/longitude points
+-   These shapes are converted to LINESTRING geometries representing the precise paths buses travel
+-   Buffer distance: **680 feet** (measured from route centerline)
+    - 660 feet = 1/8 mile from street edge (per SB2111)
+    - 20 feet = conservative half-street-width estimate (centerline to curb)
+    - Total ensures 1/8 mile measurement from where riders access transit (curb), not road center
+-   This shapes-based approach is more accurate than street network approximations because:
+    - Uses actual vehicle paths (including highways, expressways, complex routing)
+    - Only buffers portions of routes where frequent service actually operates
+    - Avoids over-qualification from buffering entire multi-block street segments
+-   Street width estimate (20 feet) based on transportation engineering research:
+    - Local streets: 10-16 feet half-width (centerline to curb)
+    - Arterials: 14-25 feet half-width
+    - 20 feet is conservative middle value covering most street types (AASHTO standards)
+
 **Geographic Boundaries and Clipping:**
 
 -   All transit hub and corridor buffers are clipped to Illinois state boundaries
