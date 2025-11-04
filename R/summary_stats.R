@@ -14,27 +14,27 @@
 #' Returns counts and totals needed for reporting (excludes route/interval averages).
 #'
 #' @param all_hubs_sf sf object with all transit hubs
-#' @param qualifying_corridor_stops_sf sf object with qualifying corridor stops
+#' @param qualifying_corridor_shapes_sf sf object with qualifying corridor route shapes
 #' @return List containing:
 #'   - bus_hub_summary: Summary statistics for bus hubs by agency (total_stops, unique_clusters)
-#'   - corridor_summary: Summary statistics for corridors by agency (total_stops)
+#'   - corridor_summary: Summary statistics for corridors by agency (total_shapes)
 #'   - rail_hub_count: Total number of rail hubs
 #'   - total_hubs: Total number of all hubs
 #'   - rail_hub_counts: Count of rail hubs by agency
-#'   - qualifying_bus_hubs, rail_stops, qualifying_corridor_stops: Raw data tables
+#'   - qualifying_bus_hubs, rail_stops, qualifying_corridor_shapes: Raw data tables
 #'   - by_agency: Dynamic structure with hub and corridor stats by agency
 #'   - Legacy individual agency stats (cta_hub, pace_hub, etc.) for backward compatibility
 #'
 #' @examples
 #' \dontrun{
-#' stats <- generate_summary_statistics(all_hubs_sf, qualifying_corridor_stops_sf)
+#' stats <- generate_summary_statistics(all_hubs_sf, qualifying_corridor_shapes_sf)
 #' }
-generate_summary_statistics <- function(all_hubs_sf, qualifying_corridor_stops_sf) {
+generate_summary_statistics <- function(all_hubs_sf, qualifying_corridor_shapes_sf) {
   cat("\n=== Generating Summary Statistics ===\n\n")
 
   # Convert sf objects to data.tables for analysis
   all_hubs <- as.data.table(all_hubs_sf)
-  qualifying_corridor_stops <- as.data.table(qualifying_corridor_stops_sf)
+  qualifying_corridor_shapes <- as.data.table(qualifying_corridor_shapes_sf)
 
   # Separate bus hubs and rail stops
   qualifying_bus_hubs <- all_hubs[type == "bus_hub"]
@@ -54,15 +54,15 @@ generate_summary_statistics <- function(all_hubs_sf, qualifying_corridor_stops_s
     )
   }
 
-  # Corridor summary
-  corridor_summary <- if (nrow(qualifying_corridor_stops) > 0) {
-    qualifying_corridor_stops[, .(
-      total_stops = .N
+  # Corridor summary (now counts route shapes instead of stops)
+  corridor_summary <- if (nrow(qualifying_corridor_shapes) > 0) {
+    qualifying_corridor_shapes[, .(
+      total_shapes = .N
     ), by = agency]
   } else {
     data.table(
       agency = character(0),
-      total_stops = integer(0)
+      total_shapes = integer(0)
     )
   }
 
@@ -118,7 +118,7 @@ generate_summary_statistics <- function(all_hubs_sf, qualifying_corridor_stops_s
     rail_hub_counts = rail_hub_counts,
     qualifying_bus_hubs = qualifying_bus_hubs,
     rail_stops = rail_stops,
-    qualifying_corridor_stops = qualifying_corridor_stops,
+    qualifying_corridor_shapes = qualifying_corridor_shapes,
 
     # NEW: Dynamic by_agency structure
     by_agency = by_agency,

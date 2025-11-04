@@ -43,7 +43,7 @@ Parking mandates, also known as parking minimums, are zoning regulations that re
 options(repos = c(CRAN = "https://cloud.r-project.org/"))
 
 # Install packages if not already installed
-required_packages <- c("tidyverse", "sf", "leaflet", "leaflet.extras",
+required_packages <- c("tidyverse", "sf", "lwgeom", "leaflet", "leaflet.extras",
                        "data.table", "zip", "httr", "lubridate", "mapview", "tigris", "kableExtra")
 
 new_packages <- required_packages[!required_packages %in% installed.packages()[,"Package"]]
@@ -53,6 +53,7 @@ if(length(new_packages)) install.packages(new_packages)
 library(tidyverse)
 library(sf)
 library(leaflet)
+library(lwgeom)
 library(leaflet.extras)
 library(data.table)
 library(zip)
@@ -208,17 +209,18 @@ cat(sprintf("Hubs after filtering to Illinois boundary: %d\n", nrow(all_hubs_sf)
 ```{r process_corridors_and_buffers, results='hide'}
 ## Identify Corridors and Create Buffers
 
-# Identify qualifying transit corridors
-qualifying_corridor_stops_sf <- identify_qualifying_corridors(
-  all_stops, am_peak_bus_stops, pm_peak_bus_stops
+# Identify qualifying transit corridors (direction-aware combined frequency)
+corridor_results <- identify_qualifying_corridors(
+  all_stops, am_peak_bus_stops, pm_peak_bus_stops,
+  all_trips, all_shapes
 )
+
+qualifying_corridor_shapes_sf <- corridor_results$qualifying_corridor_shapes
+corridor_qualification_summary <- corridor_results$qualification_summary
 
 # Create corridor buffers (1/8 mile along actual route geometry from GTFS shapes)
 all_corridors_union_wgs84 <- create_corridor_buffers(
-  qualifying_corridor_stops_sf,
-  all_stop_times,
-  all_trips,
-  all_shapes,
+  qualifying_corridor_shapes_sf,
   illinois_boundary
 )
 
@@ -276,7 +278,7 @@ pct_combined <- as.numeric(combined_area_sqmi) / total_il_area_sqmi * 100
 
 # Count hubs and routes
 hub_counts <- table(all_hubs_sf$agency_name)
-qualifying_corridor_stop_count <- nrow(qualifying_corridor_stops_sf)
+qualifying_corridor_shape_count <- nrow(qualifying_corridor_shapes_sf)
 ```
 
 ```{r create_map}
@@ -300,7 +302,7 @@ map
 
 ```{r summary_stats, include=FALSE}
 # Generate all summary statistics
-stats <- generate_summary_statistics(all_hubs_sf, qualifying_corridor_stops_sf)
+stats <- generate_summary_statistics(all_hubs_sf, qualifying_corridor_shapes_sf)
 
 # Extract summary variables for use in inline R code
 bus_hub_summary <- stats$bus_hub_summary
@@ -320,7 +322,7 @@ rmtd_corridor <- stats$rmtd_corridor
 rail_hub_counts <- stats$rail_hub_counts
 qualifying_bus_hubs <- stats$qualifying_bus_hubs
 rail_stops <- stats$rail_stops
-qualifying_corridor_stops <- stats$qualifying_corridor_stops
+qualifying_corridor_shapes <- stats$qualifying_corridor_shapes
 ```
 
 ### Summary Statistics
@@ -450,44 +452,49 @@ This analysis implements the following methodology to identify qualifying transi
 -   This helps ensure routes truly intersect at the location, not just have nearby stops within 150 feet
 -   Example: Route A stops at "State & Madison", Route B stops at "State & Monroe" (both within 150ft) → they share "State" street → overlap verified
 
-**Combined Frequency Calculation:**
+**Combined Frequency Calculation (Hubs + Corridors):**
 
--   For each stop cluster (hubs) or individual stop (corridors), we count total trips across all routes during each peak period
--   Combined service interval = peak period duration (120 min) ÷ total trips
--   Example: 8 trips in 2 hours = 120 ÷ 8 = **15 minute average interval**
+-   For each stop cluster (hub) we count unique weekday trips during the AM and PM peaks
+-   For corridors we first map trips to their GTFS shapes and split those shapes into **directional segments** that represent the exact portion of a street where one or more routes actually overlap
+-   **Direction-aware**: Trips are always summed separately by direction (e.g., northbound vs southbound) so opposite-direction service never inflates frequency
+-   Combined service interval = peak period duration (120 min) ÷ total trips in that direction
+-   Example: Route A (4 northbound AM trips) + Route B (4 northbound AM trips) on the same northbound street segment = 8 northbound AM trips → 120 ÷ 8 = **15 minute combined interval**
 
 **Qualification Criteria:**
 
 -   **Bus Hubs**: Must have **2 or more routes** AND **combined frequency ≤ 15 minutes** in at least one peak period AND **routes must overlap on same street/intersection**
--   **Bus Corridors**: Must have **1 or more routes** AND **combined frequency ≤ 15 minutes** in at least one peak period
+-   **Bus Corridors**: Must have **1 or more routes** AND **direction-aware combined frequency ≤ 15 minutes** in at least one peak period
+  - Routes on the same street that individually don't qualify may qualify together if their combined frequency meets the threshold
+  - Directions are kept separate (northbound and southbound are not combined)
+  - A corridor qualifies if **any direction in any peak period** has combined frequency ≤15 minutes
 -   **Rail Hubs**: All rail stations within Illinois automatically qualify (CTA rail, Metra, and Metro St. Louis MetroLink)
 
 **Direction Handling:**
 
 -   If GTFS `direction_id` data is available, routes are analyzed by direction (northbound/southbound, eastbound/westbound)
--   This provides more accurate service frequency calculations at directional stops
+-   For corridors, when multiple routes overlap on the same street:
+  - Trips are summed across routes **within each direction** (e.g., all northbound trips together)
+  - This reflects actual transit availability: if you're waiting for a northbound bus, you can take any northbound route
+  - Opposite directions are never combined (bi-directional service is kept separate)
 
-**Corridor Buffering Methodology:**
+**Corridor Identification & Buffering Workflow:**
 
--   Corridors are identified by finding all bus stops that meet the frequency criteria (1+ routes, ≤15 min interval)
--   For each qualifying stop, we trace back to the actual transit routes serving that stop:
-    1. Stop → stop_times (all trips visiting that stop)
-    2. Trips → shapes (GTFS route geometry for those trips)
-    3. Extract unique shapes from trips serving qualifying stops
--   GTFS shapes.txt provides actual vehicle paths as ordered sequences of latitude/longitude points
--   These shapes are converted to LINESTRING geometries representing the precise paths buses travel
--   Buffer distance: **680 feet** (measured from route centerline)
-    - 660 feet = 1/8 mile from street edge (per SB2111)
-    - 20 feet = conservative half-street-width estimate (centerline to curb)
-    - Total ensures 1/8 mile measurement from where riders access transit (curb), not road center
--   This shapes-based approach is more accurate than street network approximations because:
-    - Uses actual vehicle paths (including highways, expressways, complex routing)
-    - Only buffers portions of routes where frequent service actually operates
-    - Avoids over-qualification from buffering entire multi-block street segments
--   Street width estimate (20 feet) based on transportation engineering research:
-    - Local streets: 10-16 feet half-width (centerline to curb)
-    - Arterials: 14-25 feet half-width
-    - 20 feet is conservative middle value covering most street types (AASHTO standards)
+1. **Directional trip metrics:** For every route we count unique trips by direction (when available) during the AM and PM peaks and attach those counts to the GTFS shape used by the trip.
+2. **Geometry preparation:** Shapes are converted to LINESTRING geometries in Illinois State Plane feet. An optional simplification step (default tolerance = 5 feet) removes redundant vertices while keeping alignment with the street network.
+3. **Segment segmentation:** Within each agency and direction we split shapes into minimal segments:
+   - Segments used by only a single route remain intact (no expensive overlap processing).
+   - Where multiple routes share the same roadway the combined geometry is "noded" (via `lwgeom::st_node`) so every overlapping stretch becomes its own segment.
+4. **Directional aggregation:** For each segment we sum trips across the covering routes **within the same direction** and compute AM/PM headways. Only the segments where any direction in either peak has headway ≤ 15 minutes qualify as corridors.
+5. **Buffering:** Qualified segments are buffered by **680 feet** (660 ft = 1/8 mile from curb + 20 ft half street width) and clipped to the Illinois boundary.
+
+This segment-based approach means:
+
+- Only the exact portions of streets with combined frequent service are buffered.
+- Overlaps count only where they physically occur — a route that briefly shares a street with another inherits the combined frequency **only** on the shared blocks.
+- Performance improves because large, non-overlapping shapes skip the intersection-heavy processing entirely.
+- Geometry simplification keeps computation tractable while staying within a 5-foot tolerance (set to 0 for maximum fidelity if needed).
+
+Street-width assumptions remain unchanged: 20 feet is a conservative half-width that covers most Illinois street types (local and arterial) per AASHTO guidance.
 
 **Geographic Boundaries and Clipping:**
 
@@ -503,7 +510,7 @@ Senate Bill 2111 contains three ambiguities that significantly affect which area
 
 **1. "Intersecting routes"**: The statute refers to "an intersection of 2 or more bus routes" but does not specify whether this means routes that physically cross each other at a road intersection, or whether it includes routes that overlap on the same street without crossing. **Our interpretation**: Routes must serve stops at the same street intersection (verified through spatial clustering within 150 feet combined with street name matching). Alternative interpretations counting parallel routes on the same street would dramatically expand qualifying areas.
 
-**2. "Combined frequency"**: The statute specifies "combined frequency of service interval" but does not define how frequencies from multiple routes should be combined. Should two routes with 30-minute headways be considered as 30-minute combined service, or 15-minute combined service? **Our interpretation**: We sum total trips across all qualifying routes during peak periods (e.g., two routes with 30-minute frequency = 4 trips/hour each = 8 trips/hour = 15-minute combined interval). Alternative interpretations using averaged frequencies or minimum headways would result in substantially fewer qualifying hubs.
+**2. "Combined frequency"**: The statute specifies "combined frequency of service interval" but does not define how frequencies from multiple routes should be combined. Should two routes with 30-minute headways be considered as 30-minute combined service, or 15-minute combined service? **Our interpretation**: We sum total trips across all routes during peak periods in a direction-aware manner (e.g., two routes with 30-minute northbound frequency = 4 northbound trips/hour each = 8 northbound trips/hour = 15-minute combined northbound interval). For corridors, routes sharing the same street geometry qualify together if their combined frequency (within each direction) meets the threshold, and we split those geometries into directional segments so the combined headway only applies to the exact blocks where routes overlap. Alternative interpretations using averaged frequencies or minimum headways would result in substantially fewer qualifying locations.
 
 **3. Stop clustering and directionality**: The statute does not specify whether routes must share the exact same stop_id to qualify as "intersecting," or whether nearby stops serving the same intersection should be grouped together. It also does not address whether opposite-direction service should be counted separately or combined. **Our interpretation**: We cluster stops within 150 feet that serve the same street intersection, and when GTFS direction_id data is available, we analyze routes by direction to avoid double-counting bidirectional service. Alternative interpretations requiring exact stop_id matches would exclude many legitimate transit hubs where routes serve nearby stops at the same intersection.
 

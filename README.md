@@ -202,6 +202,7 @@ Handles differences in GTFS implementation across agencies:
 
 - All buffers clipped to Illinois state boundaries
 - Uses GTFS shapes.txt (actual transit route geometry) for accurate corridor identification
+- Corridor qualification operates on direction-aware segments: shapes are optionally simplified (default 5 ft tolerance) and split so combined headways are applied only where routes physically overlap
 - Corridor buffers measure 1/8 mile from street edge (680 feet total: 660 ft + 20 ft street width)
 - Distance calculations in feet using Illinois State Plane projection (EPSG:3435)
 - Final output in web-friendly WGS84 (EPSG:4326)
@@ -218,6 +219,7 @@ The notebook automatically installs required packages:
 required_packages <- c(
   "tidyverse",        # Data manipulation and visualization
   "sf",              # Spatial data handling
+  "lwgeom",          # Advanced GEOS operations (line noding / simplification)
   "leaflet",         # Interactive mapping
   "leaflet.extras",  # Additional Leaflet features
   "data.table",      # Fast data processing for large GTFS files
@@ -361,11 +363,12 @@ Transit Hubs (rail + qualifying bus hubs)
     │      └─ Creates 1/2 mile (2640 ft) buffers by agency
     │
     └──→ identify_qualifying_corridors() [R/corridor_processing.R]
-           ├─ Calculates corridor frequencies (1+ route, ≤15 min)
+           ├─ Builds direction-aware trip metrics per route + shape
+           ├─ Optionally simplifies shapes (5 ft tolerance) and splits overlaps into directional segments
+           ├─ Aggregates trips per segment/direction and keeps those with ≤15 min headways
            └─ create_corridor_buffers()
-              ├─ Links qualifying stops → trips → shapes
-              ├─ Converts GTFS shapes to route geometry
-              └─ Creates 680 ft buffers (660 ft + 20 ft street width) from edge
+              ├─ Buffers only qualifying segments by 680 ft (660 ft + 20 ft street width)
+              └─ Clips buffers to Illinois boundary
     ↓
 Hub Buffers + Corridor Buffers
     ↓
