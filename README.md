@@ -201,7 +201,9 @@ Handles differences in GTFS implementation across agencies:
 ### 6. **Geographic Precision**
 
 - All buffers clipped to Illinois state boundaries
-- Uses TIGER/Line street network data for accurate corridor distances
+- Uses GTFS shapes.txt (actual transit route geometry) for accurate corridor identification
+- Corridor qualification operates on direction-aware segments: shapes are optionally simplified (default 5 ft tolerance) and split so combined headways are applied only where routes physically overlap
+- Corridor buffers measure 1/8 mile from street edge (680 feet total: 660 ft + 20 ft street width)
 - Distance calculations in feet using Illinois State Plane projection (EPSG:3435)
 - Final output in web-friendly WGS84 (EPSG:4326)
 
@@ -217,10 +219,11 @@ The notebook automatically installs required packages:
 required_packages <- c(
   "tidyverse",        # Data manipulation and visualization
   "sf",              # Spatial data handling
+  "lwgeom",          # Advanced GEOS operations (line noding / simplification)
   "leaflet",         # Interactive mapping
   "leaflet.extras",  # Additional Leaflet features
   "data.table",      # Fast data processing for large GTFS files
-  "tigris",          # Download Census TIGER/Line shapefiles
+  "tigris",          # Download Census state boundaries
   "zip",             # ZIP file handling
   "httr",            # HTTP requests for GTFS downloads
   "lubridate",       # Date/time handling
@@ -343,7 +346,7 @@ GTFS Data (14 agencies across Illinois)
     ↓   ├─ ✓ Validates data quality
     ↓   └─ Combines into unified tables
     ↓
-Combined GTFS tables (stops, routes, trips, stop_times, calendar)
+Combined GTFS tables (stops, routes, trips, stop_times, calendar, shapes)
     ↓
     ↓ identify_all_hubs() [R/hub_processing.R]
     ↓   ├─ Identifies rail stations (CTA, Metra, Metro STL)
@@ -360,11 +363,12 @@ Transit Hubs (rail + qualifying bus hubs)
     │      └─ Creates 1/2 mile (2640 ft) buffers by agency
     │
     └──→ identify_qualifying_corridors() [R/corridor_processing.R]
-           ├─ Calculates corridor frequencies (1+ route, ≤15 min)
+           ├─ Builds direction-aware trip metrics per route + shape
+           ├─ Optionally simplifies shapes (5 ft tolerance) and splits overlaps into directional segments
+           ├─ Aggregates trips per segment/direction and keeps those with ≤15 min headways
            └─ create_corridor_buffers()
-              ├─ Downloads TIGER/Line street network
-              ├─ Snaps stops to nearest streets
-              └─ Creates 1/8 mile (660 ft) buffers
+              ├─ Buffers only qualifying segments by 680 ft (660 ft + 20 ft street width)
+              └─ Clips buffers to Illinois boundary
     ↓
 Hub Buffers + Corridor Buffers
     ↓
@@ -401,7 +405,7 @@ Interactive HTML Map + Summary Statistics
   - Go West (Macomb): https://api.transloc.com/gtfs/wiu.zip
 
 - **Geographic Boundaries**: Illinois state boundaries via US Census TIGER/Line
-- **Street Network**: Road centerlines via TIGER/Line for accurate distance calculations
+- **Route Geometry**: GTFS shapes.txt from all 14 agencies (actual transit vehicle paths)
 
 ### GTFS Normalization
 
@@ -435,7 +439,7 @@ Checks for:
 Checks for:
 - ✅ Valid geometries (detects and repairs self-intersections, invalid polygons)
 - ✅ Accurate coordinate transformations (verifies CRS changes preserve accuracy)
-- ✅ Correct buffer distances (validates 150ft, 2640ft, 660ft buffers)
+- ✅ Correct buffer distances (validates 150ft, 2640ft, 680ft buffers)
 - ✅ Illinois boundary compliance
 
 Validation results are printed during execution and included in the output HTML.
@@ -503,6 +507,13 @@ See [R/README.md](R/README.md) for testing conventions and examples.
 1. ✅ **Agency Expansion**: Added 8 new transit agencies across Illinois (6 → 14 total)
 2. ✅ **Centralized Configuration**: Created agency_metadata.R module for scalability
 3. ✅ **Statewide Coverage**: Expanded from Chicago metro to comprehensive Illinois coverage
+
+**Phase 4 - Corridor Buffering Accuracy** (November 2025):
+1. ✅ **GTFS Shapes Integration**: Added shapes.txt loading to GTFS processing pipeline
+2. ✅ **Route Geometry Buffering**: Replaced TIGER/Line street approximations with actual route paths
+3. ✅ **Street Width Adjustment**: Added 20-foot offset to measure from street edge (680 ft total)
+4. ✅ **Precision Improvement**: Corridors now only include areas where routes actually traverse
+5. ✅ **Dependency Elimination**: Removed external street network data requirements
 
 **Benefits**:
 - Code reusability across transit analysis projects

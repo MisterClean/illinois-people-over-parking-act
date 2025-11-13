@@ -9,29 +9,32 @@
 #' @param agency_dir Character. Path to directory containing extracted GTFS files
 #'   (typically returned from \code{\link{download_and_extract_gtfs}})
 #'
-#' @return Named list with 6 data.table elements:
+#' @return Named list with 7 data.table elements:
 #'   \describe{
 #'     \item{stops}{Stop locations with unique_stop_id}
 #'     \item{routes}{Route definitions with unique_route_id}
-#'     \item{trips}{Trip schedules with unique_trip_id and unique_route_id}
+#'     \item{trips}{Trip schedules with unique_trip_id, unique_route_id, and unique_shape_id}
 #'     \item{stop_times}{Stop time sequences with unique_trip_id and unique_stop_id}
 #'     \item{calendar}{Service calendars with agency field}
 #'     \item{calendar_dates}{Service calendar exceptions/additions with agency field}
+#'     \item{shapes}{Route geometry with unique_shape_id and point sequences}
 #'   }
 #'
 #' @details
 #' This function normalizes GTFS data across agencies by:
 #' \enumerate{
 #'   \item Reading the core GTFS files: stops.txt, routes.txt, trips.txt,
-#'     stop_times.txt, calendar.txt, and calendar_dates.txt (if present)
+#'     stop_times.txt, calendar.txt, calendar_dates.txt (if present), and
+#'     shapes.txt (if present)
 #'   \item Adding \code{agency} field to all tables
 #'   \item Creating unique identifiers by prefixing original IDs with agency name:
 #'     \itemize{
 #'       \item \code{unique_stop_id = "<agency>_<stop_id>"}
 #'       \item \code{unique_route_id = "<agency>_<route_id>"}
 #'       \item \code{unique_trip_id = "<agency>_<trip_id>"}
+#'       \item \code{unique_shape_id = "<agency>_<shape_id>"}
 #'     }
-#'   \item Handling missing optional fields (location_type, parent_station, direction_id)
+#'   \item Handling missing optional fields (location_type, parent_station, direction_id, shape_id)
 #'   \item Converting integer64 columns to standard integers to avoid type issues
 #'   \item Converting date columns to character format for consistency
 #' }
@@ -133,15 +136,26 @@ read_normalize_gtfs <- function(agency_name, agency_dir) {
     if (!"direction_id" %in% names(trips)) {
       trips[, direction_id := NA_integer_]
     }
+
+    # Handle shape_id if it exists (used for route geometry)
+    if ("shape_id" %in% names(trips)) {
+      trips[, shape_id := as.character(shape_id)]
+      trips[, unique_shape_id := paste0(agency_name, "_", shape_id)]
+    } else {
+      trips[, shape_id := NA_character_]
+      trips[, unique_shape_id := NA_character_]
+    }
   } else {
     trips <- data.table::data.table(
       trip_id = character(),
       route_id = character(),
       service_id = character(),
       direction_id = integer(),
+      shape_id = character(),
       agency = character(),
       unique_trip_id = character(),
-      unique_route_id = character()
+      unique_route_id = character(),
+      unique_shape_id = character()
     )
   }
 
@@ -217,12 +231,42 @@ read_normalize_gtfs <- function(agency_name, agency_dir) {
     )
   }
 
+  # Read shapes data (optional - contains route geometry as lat/lon point sequences)
+  shapes_file <- file.path(agency_dir, "shapes.txt")
+  if (file.exists(shapes_file)) {
+    shapes <- data.table::fread(shapes_file)
+    shapes[, agency := agency_name]
+    shapes[, shape_id := as.character(shape_id)]
+    shapes[, unique_shape_id := paste0(agency_name, "_", shape_id)]
+
+    # Convert shape_pt_sequence to integer to avoid integer64 issues
+    if ("shape_pt_sequence" %in% names(shapes)) {
+      shapes[, shape_pt_sequence := as.integer(shape_pt_sequence)]
+    }
+
+    # Ensure shape_dist_traveled exists (optional field)
+    if (!"shape_dist_traveled" %in% names(shapes)) {
+      shapes[, shape_dist_traveled := NA_real_]
+    }
+  } else {
+    shapes <- data.table::data.table(
+      shape_id = character(),
+      shape_pt_lat = numeric(),
+      shape_pt_lon = numeric(),
+      shape_pt_sequence = integer(),
+      shape_dist_traveled = numeric(),
+      agency = character(),
+      unique_shape_id = character()
+    )
+  }
+
   return(list(
     stops = stops,
     routes = routes,
     trips = trips,
     stop_times = stop_times,
     calendar = calendar,
-    calendar_dates = calendar_dates
+    calendar_dates = calendar_dates,
+    shapes = shapes
   ))
 }

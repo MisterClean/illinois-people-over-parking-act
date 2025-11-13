@@ -114,13 +114,13 @@ standardize_calendar_dates_columns <- function(calendar_dates_dt) {
 
 #' Combine GTFS Tables from Multiple Agencies
 #'
-#' Combines stops, routes, trips, stop_times, calendar, and calendar_dates
-#' tables from multiple agencies. Handles integer64 conversion and calendar
-#' standardization.
+#' Combines stops, routes, trips, stop_times, calendar, calendar_dates, and
+#' shapes tables from multiple agencies. Handles integer64 conversion and
+#' calendar standardization.
 #'
 #' @param agency_data_list List of agency GTFS data (each with stops, routes, trips, etc.)
 #' @return List with combined tables: all_stops, all_routes, all_trips,
-#'   all_stop_times, all_calendar, all_calendar_dates
+#'   all_stop_times, all_calendar, all_calendar_dates, all_shapes
 #'
 #' @examples
 #' \dontrun{
@@ -135,6 +135,7 @@ combine_gtfs_tables <- function(agency_data_list) {
     data$stop_times <- convert_integer64(data$stop_times)
     data$calendar <- convert_integer64(data$calendar)
     data$calendar_dates <- convert_integer64(data$calendar_dates)
+    data$shapes <- convert_integer64(data$shapes)
   }
 
   # Combine basic tables
@@ -158,13 +159,18 @@ combine_gtfs_tables <- function(agency_data_list) {
   all_calendar_dates <- rbindlist(lapply(agency_data_list, function(x) x$calendar_dates),
                                   fill = TRUE, use.names = TRUE)
 
+  # Combine shapes tables
+  all_shapes <- rbindlist(lapply(agency_data_list, function(x) x$shapes),
+                          fill = TRUE, use.names = TRUE)
+
   return(list(
     all_stops = all_stops,
     all_routes = all_routes,
     all_trips = all_trips,
     all_stop_times = all_stop_times,
     all_calendar = all_calendar,
-    all_calendar_dates = all_calendar_dates
+    all_calendar_dates = all_calendar_dates,
+    all_shapes = all_shapes
   ))
 }
 
@@ -215,10 +221,11 @@ enrich_stop_times <- function(all_stop_times, all_trips, all_routes) {
 #' @return List containing:
 #'   - all_stops: Combined stops from all agencies
 #'   - all_routes: Combined routes from all agencies
-#'   - all_trips: Combined trips from all agencies
+#'   - all_trips: Combined trips from all agencies (with unique_shape_id)
 #'   - all_stop_times: Combined and enriched stop_times from all agencies
 #'   - all_calendar: Combined calendar data from all agencies
 #'   - all_calendar_dates: Combined calendar_dates from all agencies
+#'   - all_shapes: Combined route geometry from all agencies
 #'   - validation_results: Validation report (if validate = TRUE)
 #'   - agency_data: List of individual agency data for reference
 #'
@@ -283,6 +290,8 @@ process_all_gtfs_data <- function(agency_configs, validate = TRUE) {
   cat(sprintf("  - Stop times: %d\n", nrow(combined$all_stop_times)))
   cat(sprintf("  - Calendar entries: %d\n", nrow(combined$all_calendar)))
   cat(sprintf("  - Calendar date exceptions: %d\n", nrow(combined$all_calendar_dates)))
+  cat(sprintf("  - Shape points: %d\n", nrow(combined$all_shapes)))
+  cat(sprintf("  - Unique shapes: %d\n", length(unique(combined$all_shapes$unique_shape_id))))
 
   # Return combined data with validation results
   return(c(combined, list(
