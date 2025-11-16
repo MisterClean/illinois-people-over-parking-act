@@ -231,12 +231,15 @@ identify_overlapping_segments <- function(route_trips, all_trips, all_shapes,
   }
 
   # Join route/shape links to geometry and trip counts
+  shapes_sf_df <- as.data.frame(shapes_sf)
+
   route_shapes_sf <- merge(
     route_shapes_link,
-    shapes_sf,
+    shapes_sf_df,
     by = c("unique_shape_id", "agency"),
     all.x = TRUE
   )
+  route_shapes_sf <- st_as_sf(route_shapes_sf, sf_column_name = "geometry")
 
   route_shapes_sf <- merge(
     route_shapes_sf,
@@ -244,13 +247,14 @@ identify_overlapping_segments <- function(route_trips, all_trips, all_shapes,
     by = c("unique_route_id", "agency", "direction_id"),
     all.x = TRUE
   )
+  route_shapes_sf <- st_as_sf(route_shapes_sf, sf_column_name = "geometry")
 
   route_shapes_sf[, `:=`(
     trips_am = fifelse(is.na(trips_am), 0, trips_am),
     trips_pm = fifelse(is.na(trips_pm), 0, trips_pm)
   )]
 
-  route_shapes_sf <- route_shapes_sf[!is.na(geometry)]
+  route_shapes_sf <- route_shapes_sf[!is.na(route_shapes_sf$geometry), ]
 
   if (nrow(route_shapes_sf) == 0) {
     warning("No route shapes available after joining with trip counts")
@@ -270,10 +274,9 @@ identify_overlapping_segments <- function(route_trips, all_trips, all_shapes,
     ))
   }
 
-  route_shapes_sf <- st_as_sf(route_shapes_sf)
-
   # Work in projected coordinates for segmentization and intersection
   target_crs <- 26916
+  stopifnot(inherits(route_shapes_sf, "sf"))
   shapes_projected <- st_transform(route_shapes_sf, target_crs)
 
   if (requireNamespace("units", quietly = TRUE)) {
