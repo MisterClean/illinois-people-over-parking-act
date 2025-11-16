@@ -251,15 +251,27 @@ install.packages(required_packages)
    cd illinois-people-over-parking-act
    ```
 
-2. **Open in RStudio**:
+2. **Install R and required packages (Debian/Ubuntu)**:
+   ```bash
+   make setup
+   ```
+   This bootstraps R (if missing) and installs the CRAN packages referenced in the notebook's setup chunk.
+
+3. **Open in RStudio**:
    ```r
    # Open the main notebook
    rstudioapi::navigateToFile("sb2111-people-over-parking.Rmd")
    ```
 
-3. **Run the analysis**:
+4. **Run the analysis**:
    - Click "Knit" in RStudio, **OR**
    - Run: `rmarkdown::render("sb2111-people-over-parking.Rmd")`
+
+You can also run the setup script directly if you prefer not to use `make`:
+
+```bash
+./scripts/bootstrap_r_env.sh
+```
 
 ### What Happens During Execution
 
