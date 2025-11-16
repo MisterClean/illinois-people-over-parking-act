@@ -205,7 +205,12 @@ identify_overlapping_segments <- function(route_trips, all_trips, all_shapes,
 
   # Convert shapes to geometries
   if (nrow(qualifying_metrics) > 0) {
-    qualifying_shape_data <- all_shapes[unique_shape_id %in% qualifying_metrics$unique_shape_id]
+    # Filter shapes while preserving sf class if present
+    if (inherits(all_shapes, "sf")) {
+      qualifying_shape_data <- all_shapes[all_shapes$unique_shape_id %in% qualifying_metrics$unique_shape_id, ]
+    } else {
+      qualifying_shape_data <- all_shapes[unique_shape_id %in% qualifying_metrics$unique_shape_id]
+    }
     shapes_sf <- convert_shapes_to_linestrings(qualifying_shape_data)
 
     # Merge metrics with geometries
@@ -365,6 +370,40 @@ identify_qualifying_corridors <- function(all_stops, am_peak_bus_stops, pm_peak_
 #' }
 convert_shapes_to_linestrings <- function(all_shapes) {
   cat("\n=== Converting GTFS Shapes to LINESTRING Geometries ===\n\n")
+
+  # Check if shapes have geometry column (could be sf or data.table with geometry)
+  has_geometry <- "geometry" %in% names(all_shapes)
+
+  # Check if shapes are already LINESTRING geometries (from tidytransit)
+  if (has_geometry) {
+    # Convert to sf if needed for geometry type checking
+    if (!inherits(all_shapes, "sf")) {
+      all_shapes <- st_as_sf(all_shapes)
+    }
+
+    geom_types <- unique(as.character(st_geometry_type(all_shapes)))
+    if ("LINESTRING" %in% geom_types || "MULTILINESTRING" %in% geom_types) {
+      cat("Shapes already converted to LINESTRING by tidytransit\n")
+      cat(sprintf("  %d LINESTRING geometries found\n", nrow(all_shapes)))
+
+      # Ensure required columns exist
+      if (!"num_points" %in% names(all_shapes)) {
+        # Calculate num_points from geometry if not present
+        all_shapes$num_points <- sapply(st_geometry(all_shapes), function(geom) {
+          if (inherits(geom, "LINESTRING")) {
+            nrow(st_coordinates(geom))
+          } else {
+            NA_integer_
+          }
+        })
+      }
+
+      return(all_shapes)
+    }
+  }
+
+  # Fallback: Manual conversion from point data (original approach)
+  cat("Converting shapes from point data to LINESTRING...\n")
 
   # Filter to non-empty shapes and order by sequence
   shapes_ordered <- all_shapes[!is.na(unique_shape_id) & !is.na(shape_pt_lat) & !is.na(shape_pt_lon)]

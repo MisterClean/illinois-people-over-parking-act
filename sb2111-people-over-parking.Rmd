@@ -44,7 +44,7 @@ options(repos = c(CRAN = "https://cloud.r-project.org/"))
 
 # Install packages if not already installed
 required_packages <- c("tidyverse", "sf", "lwgeom", "leaflet", "leaflet.extras",
-                       "data.table", "zip", "httr", "lubridate", "mapview", "tigris", "kableExtra")
+                       "data.table", "zip", "httr", "lubridate", "mapview", "tigris", "kableExtra", "tidytransit")
 
 new_packages <- required_packages[!required_packages %in% installed.packages()[,"Package"]]
 if(length(new_packages)) install.packages(new_packages)
@@ -62,6 +62,7 @@ library(lubridate)
 library(mapview)
 library(tigris) # For Illinois state boundary
 library(kableExtra) # Added for enhanced table formatting
+library(tidytransit) # For GTFS data processing
 
 # Disable s2 processing to avoid geometry validation issues
 sf_use_s2(FALSE)
@@ -80,6 +81,7 @@ illinois_boundary <- states(cb = TRUE, year = 2023) %>%
 
 # Load GTFS utility functions from extracted modules
 source("R/agency_metadata.R")  # Centralized agency configuration
+source("R/tidytransit_integration.R")  # tidytransit wrapper functions
 source("R/gtfs_download.R")
 source("R/gtfs_normalize.R")
 source("R/gtfs_validate.R")
@@ -102,36 +104,45 @@ source("R/summary_stats.R")
 # Now includes all 14 Illinois transit agencies (6 existing + 8 new)
 agency_configs <- get_agency_configs_for_download()
 
-# Process all GTFS data: download, normalize, validate, and combine
-gtfs_data <- process_all_gtfs_data(agency_configs, validate = TRUE)
+# Process all GTFS data using tidytransit: download, validate, add unique IDs
+agencies_data <- process_agencies_with_tidytransit(agency_configs, validate = TRUE)
+
+# Combine data from all agencies into unified tables
+combined_tables <- combine_agency_data(agencies_data)
 
 # Extract combined tables for easy access
-all_stops <- gtfs_data$all_stops
-all_routes <- gtfs_data$all_routes
-all_trips <- gtfs_data$all_trips
-all_stop_times <- gtfs_data$all_stop_times
-all_calendar <- gtfs_data$all_calendar
-all_calendar_dates <- gtfs_data$all_calendar_dates
-all_shapes <- gtfs_data$all_shapes
-validation_results <- gtfs_data$validation_results
+all_stops <- combined_tables$stops
+all_routes <- combined_tables$routes
+all_trips <- combined_tables$trips
+all_stop_times <- combined_tables$stop_times
+all_calendar <- combined_tables$calendar
+all_calendar_dates <- combined_tables$calendar_dates
+all_shapes <- combined_tables$shapes
 
-# Individual agency data available via gtfs_data$agency_data[[agency_id]]
-# Legacy assignments kept for backward compatibility:
-cta_data <- gtfs_data$agency_data$cta
-pace_data <- gtfs_data$agency_data$pace
-metra_data <- gtfs_data$agency_data$metra
-metro_stl_data <- gtfs_data$agency_data$metro_stl
-cumtd_data <- gtfs_data$agency_data$cumtd
-rmtd_data <- gtfs_data$agency_data$rmtd
+# Enrich stop_times with route information (adds unique_route_id and route_type)
+cat("Enriching stop_times with route information...\n")
+all_stop_times <- enrich_stop_times(all_stop_times, all_trips, all_routes)
+
+# Individual agency data for backward compatibility
+# Access via agencies_data[[agency_id]]$data
+cta_data <- agencies_data$cta$data
+pace_data <- agencies_data$pace$data
+metra_data <- agencies_data$metra$data
+metro_stl_data <- agencies_data$metro_stl$data
+cumtd_data <- agencies_data$cumtd$data
+rmtd_data <- agencies_data$rmtd$data
 # New agencies (8):
-metrolink_quad_cities_data <- gtfs_data$agency_data$metrolink_quad_cities
-citylink_data <- gtfs_data$agency_data$citylink
-smtd_data <- gtfs_data$agency_data$smtd
-dekalb_data <- gtfs_data$agency_data$dekalb
-connect_transit_data <- gtfs_data$agency_data$connect_transit
-dpts_data <- gtfs_data$agency_data$dpts
-galesburg_data <- gtfs_data$agency_data$galesburg
-gowest_data <- gtfs_data$agency_data$gowest
+metrolink_quad_cities_data <- agencies_data$metrolink_quad_cities$data
+citylink_data <- agencies_data$citylink$data
+smtd_data <- agencies_data$smtd$data
+dekalb_data <- agencies_data$dekalb$data
+connect_transit_data <- agencies_data$connect_transit$data
+dpts_data <- agencies_data$dpts$data
+galesburg_data <- agencies_data$galesburg$data
+gowest_data <- agencies_data$gowest$data
+
+# Store validation results for reference
+validation_results <- lapply(agencies_data, function(a) a$validation)
 ```
 
 ```{r explore_direction_data, results='hide'}
@@ -143,7 +154,7 @@ cat("=== Checking direction_id availability ===\n\n")
 # Iterate over all agencies dynamically
 all_agency_ids <- get_all_agency_ids()
 for (agency_id in all_agency_ids) {
-  trips_data <- gtfs_data$agency_data[[agency_id]]$trips
+  trips_data <- agencies_data[[agency_id]]$data$trips
   agency_name <- get_agency_display_name(agency_id)
 
   if ("direction_id" %in% names(trips_data)) {
@@ -160,21 +171,21 @@ for (agency_id in all_agency_ids) {
 
 # If direction_id exists in any agency, ensure it exists in all and rebuild all_trips
 has_direction_id <- any(sapply(all_agency_ids, function(agency_id) {
-  "direction_id" %in% names(gtfs_data$agency_data[[agency_id]]$trips)
+  "direction_id" %in% names(agencies_data[[agency_id]]$data$trips)
 }))
 
 if (has_direction_id) {
   # Ensure direction_id exists in all agency datasets (add NA if missing)
   for (agency_id in all_agency_ids) {
-    agency_data <- gtfs_data$agency_data[[agency_id]]
-    if (!"direction_id" %in% names(agency_data$trips)) {
-      agency_data$trips[, direction_id := NA_integer_]
+    if (!"direction_id" %in% names(agencies_data[[agency_id]]$data$trips)) {
+      # Add direction_id column using regular assignment (works with data.table)
+      agencies_data[[agency_id]]$data$trips$direction_id <- NA_integer_
     }
   }
 
   # Rebuild all_trips with direction_id from all agencies dynamically
   all_trips_list <- lapply(all_agency_ids, function(agency_id) {
-    gtfs_data$agency_data[[agency_id]]$trips
+    agencies_data[[agency_id]]$data$trips
   })
   all_trips <- rbindlist(all_trips_list, fill = TRUE)
 

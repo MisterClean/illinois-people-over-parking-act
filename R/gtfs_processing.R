@@ -189,10 +189,24 @@ combine_gtfs_tables <- function(agency_data_list) {
 #' enriched_stop_times <- enrich_stop_times(all_stop_times, all_trips, all_routes)
 #' }
 enrich_stop_times <- function(all_stop_times, all_trips, all_routes) {
+  # Ensure arrival_time and departure_time are character (tidytransit may use hms class)
+  if ("arrival_time" %in% names(all_stop_times)) {
+    if (!is.character(all_stop_times$arrival_time)) {
+      all_stop_times[, arrival_time := as.character(arrival_time)]
+    }
+  }
+  if ("departure_time" %in% names(all_stop_times)) {
+    if (!is.character(all_stop_times$departure_time)) {
+      all_stop_times[, departure_time := as.character(departure_time)]
+    }
+  }
+
   # Clean up stop times that are > 24:00:00
-  all_stop_times[, arrival_time := fifelse(substr(arrival_time, 1, 2) >= "24",
-                                            paste0("23:59:59"),
-                                            arrival_time)]
+  if ("arrival_time" %in% names(all_stop_times)) {
+    all_stop_times[, arrival_time := fifelse(substr(arrival_time, 1, 2) >= "24",
+                                              "23:59:59",
+                                              arrival_time)]
+  }
 
   # Add route_type to all_stop_times
   all_stop_times <- merge(
