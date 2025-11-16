@@ -294,7 +294,16 @@ identify_overlapping_segments <- function(route_trips, all_trips, all_shapes,
       return(list())
     }
 
-    neighbor_index <- st_intersects(dir_segments, sparse = TRUE)
+    buffer_distance_ft <- 30
+    buffer_distance_m <- buffer_distance_ft * 0.3048
+
+    # Buffer the direction-specific segments so near-parallel shapes on the
+    # same street still count as overlapping. This tolerance accounts for
+    # small alignment differences between agencies without inflating corridor
+    # width in the final geometry outputs.
+    dir_segments_buffered <- st_buffer(dir_segments, dist = buffer_distance_m)
+
+    neighbor_index <- st_intersects(dir_segments_buffered, sparse = TRUE)
     overlaps <- list()
     overlap_id <- 1L
 
@@ -307,27 +316,38 @@ identify_overlapping_segments <- function(route_trips, all_trips, all_shapes,
 
       for (j in neighbors) {
         inter_geom <- st_intersection(
-          st_geometry(dir_segments[i, ]),
-          st_geometry(dir_segments[j, ])
+          st_geometry(dir_segments_buffered[i, ]),
+          st_geometry(dir_segments_buffered[j, ])
         )
 
         if (length(inter_geom) == 0) {
           next
         }
 
-        inter_geom <- st_collection_extract(inter_geom, "LINESTRING")
-        if (length(inter_geom) == 0) {
+        inter_geom <- st_make_valid(inter_geom)
+        inter_geom_parts <- list(
+          st_collection_extract(inter_geom, "LINESTRING"),
+          st_collection_extract(inter_geom, "MULTILINESTRING"),
+          st_collection_extract(inter_geom, "POLYGON")
+        )
+        inter_geom_parts <- inter_geom_parts[
+          !sapply(inter_geom_parts, function(g) length(g) == 0)
+        ]
+
+        if (length(inter_geom_parts) == 0) {
           next
         }
 
-        for (piece in seq_along(inter_geom)) {
-          geom_piece <- inter_geom[piece]
+        inter_geom_combined <- do.call(c, inter_geom_parts)
+
+        for (piece in seq_along(inter_geom_combined)) {
+          geom_piece <- inter_geom_combined[piece]
           if (isTRUE(st_is_empty(geom_piece))) {
             next
           }
 
           piece_sf <- st_sf(geometry = geom_piece)
-          covering <- st_intersects(dir_segments, piece_sf, sparse = TRUE)[[1]]
+          covering <- st_intersects(dir_segments_buffered, piece_sf, sparse = TRUE)[[1]]
 
           if (length(covering) < 2) {
             next
@@ -357,6 +377,18 @@ identify_overlapping_segments <- function(route_trips, all_trips, all_shapes,
           trips_am_sum <- sum(lookup_info$trips_am, na.rm = TRUE)
           trips_pm_sum <- sum(lookup_info$trips_pm, na.rm = TRUE)
 
+          centerline_union <- st_union(st_geometry(dir_segments[covering, ]))
+          centerline_clip <- st_intersection(centerline_union, st_geometry(piece_sf))
+
+          centerline_lines <- st_collection_extract(centerline_clip, "LINESTRING")
+          if (length(centerline_lines) == 0 || all(st_is_empty(centerline_lines))) {
+            centerline_lines <- st_collection_extract(centerline_clip, "MULTILINESTRING")
+          }
+
+          if (length(centerline_lines) == 0 || all(st_is_empty(centerline_lines))) {
+            next
+          }
+
           overlaps[[overlap_id]] <- st_sf(
             agency = paste(covering_agencies, collapse = ";"),
             direction_id = dir_value,
@@ -364,7 +396,7 @@ identify_overlapping_segments <- function(route_trips, all_trips, all_shapes,
             routes = paste(covering_routes, collapse = ";"),
             trips_am = trips_am_sum,
             trips_pm = trips_pm_sum,
-            geometry = geom_piece
+            geometry = st_line_merge(centerline_lines)
           )
           overlap_id <- overlap_id + 1L
         }
