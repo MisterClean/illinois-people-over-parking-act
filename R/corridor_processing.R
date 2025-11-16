@@ -134,27 +134,32 @@ calculate_corridor_metrics <- function(am_peak_bus_stops, pm_peak_bus_stops) {
   return(all_corridor_metrics)
 }
 
-#' Build Directional Shape Metrics
+
+#' Identify Qualifying Corridors with Combined Frequency
 #'
-#' Converts route-level peak trip counts into shape-level metrics that retain
-#' direction information. Each row represents a route/shape/direction
-#' combination with associated AM/PM trip totals.
+#' Aggregates bus routes by GTFS shape_id and calculates combined frequencies
+#' by direction. Routes that share the same shape_id (same path) have their trips
+#' combined when calculating frequency.
 #'
-#' @param route_trips data.table from calculate_route_trip_counts()
-#' @param all_trips Combined trips data.table (contains unique_shape_id, direction_id)
-#' @param all_shapes Combined shapes data.table
-#' @return sf object with columns:
-#'   unique_shape_id, unique_route_id, agency, direction_key, trips_am, trips_pm, geometry
-build_directional_shape_metrics <- function(route_trips, all_trips, all_shapes) {
+#' @param route_trips data.table with trip counts (from calculate_route_trip_counts)
+#' @param all_trips data.table with all trips (to get unique_shape_id)
+#' @param all_shapes data.table with GTFS shapes
+#' @param max_interval_minutes Numeric. Maximum service interval (default: 15)
+#' @return List with:
+#'   - qualifying_shapes: sf object with shapes that qualify
+#'   - qualification_summary: data.table with diagnostic info
+identify_overlapping_segments <- function(route_trips, all_trips, all_shapes,
+                                          max_interval_minutes = 15) {
+  cat("\n=== Identifying Qualifying Corridors (Shape-Level Aggregation) ===\n\n")
+
   # Link routes to their shapes with direction information
   route_shapes_link <- unique(all_trips[
     unique_route_id %in% route_trips$unique_route_id,
     .(unique_route_id, unique_shape_id, direction_id, agency)
   ])
   route_shapes_link <- route_shapes_link[!is.na(unique_shape_id) & unique_shape_id != ""]
-  route_shapes_link[, direction_key := fifelse(is.na(direction_id), -1L, as.integer(direction_id))]
 
-  # Merge route-level trip counts
+  # Merge with trip counts
   routes_with_counts <- merge(
     route_shapes_link,
     route_trips,
@@ -162,85 +167,60 @@ build_directional_shape_metrics <- function(route_trips, all_trips, all_shapes) 
     allow.cartesian = TRUE
   )
 
-  # Derive directional trip totals
-  routes_with_counts[, trips_am := fifelse(
-    direction_key == 1L, trips_am_dir1,
-    fifelse(direction_key == 0L, trips_am_dir0,
-            trips_am_dir0 + trips_am_dir1)
-  )]
-  routes_with_counts[, trips_pm := fifelse(
-    direction_key == 1L, trips_pm_dir1,
-    fifelse(direction_key == 0L, trips_pm_dir0,
-            trips_pm_dir0 + trips_pm_dir1)
-  )]
+  cat(sprintf("Routes with trip counts and shapes: %d\n", uniqueN(routes_with_counts$unique_route_id)))
 
-  # Drop combinations with no service in either peak
-  routes_with_counts <- routes_with_counts[(trips_am > 0) | (trips_pm > 0)]
+  # Aggregate trip counts by shape_id and direction
+  # For each shape + direction combination, sum trips across all routes
+  shape_direction_metrics <- routes_with_counts[, .(
+    num_routes = uniqueN(unique_route_id),
+    routes = paste(sort(unique(unique_route_id)), collapse = ";"),
+    # Sum trips across routes for each direction
+    trips_am_dir0 = sum(trips_am_dir0),
+    trips_am_dir1 = sum(trips_am_dir1),
+    trips_pm_dir0 = sum(trips_pm_dir0),
+    trips_pm_dir1 = sum(trips_pm_dir1)
+  ), by = .(unique_shape_id, agency)]
 
-  if (nrow(routes_with_counts) == 0) {
+  cat(sprintf("Unique shapes with aggregated metrics: %d\n", nrow(shape_direction_metrics)))
+
+  # Calculate frequencies for each direction/peak combination
+  shape_direction_metrics[, interval_am_dir0 := ifelse(trips_am_dir0 > 0, 120 / trips_am_dir0, Inf)]
+  shape_direction_metrics[, interval_am_dir1 := ifelse(trips_am_dir1 > 0, 120 / trips_am_dir1, Inf)]
+  shape_direction_metrics[, interval_pm_dir0 := ifelse(trips_pm_dir0 > 0, 120 / trips_pm_dir0, Inf)]
+  shape_direction_metrics[, interval_pm_dir1 := ifelse(trips_pm_dir1 > 0, 120 / trips_pm_dir1, Inf)]
+
+  # Qualify if ANY direction in ANY peak meets threshold
+  shape_direction_metrics[, qualifies := (interval_am_dir0 <= max_interval_minutes) |
+                                         (interval_am_dir1 <= max_interval_minutes) |
+                                         (interval_pm_dir0 <= max_interval_minutes) |
+                                         (interval_pm_dir1 <= max_interval_minutes)]
+
+  # Filter to qualifying shapes
+  qualifying_metrics <- shape_direction_metrics[qualifies == TRUE]
+
+  cat(sprintf("\nQualifying corridor shapes: %d (out of %d total)\n",
+              nrow(qualifying_metrics), nrow(shape_direction_metrics)))
+  cat(sprintf("  Single-route shapes: %d\n", sum(qualifying_metrics$num_routes == 1)))
+  cat(sprintf("  Multi-route shapes: %d\n", sum(qualifying_metrics$num_routes > 1)))
+
+  # Convert shapes to geometries
+  if (nrow(qualifying_metrics) > 0) {
+    qualifying_shape_data <- all_shapes[unique_shape_id %in% qualifying_metrics$unique_shape_id]
+    shapes_sf <- convert_shapes_to_linestrings(qualifying_shape_data)
+
+    # Merge metrics with geometries
+    qualifying_shapes_sf <- merge(
+      shapes_sf,
+      qualifying_metrics,
+      by = c("unique_shape_id", "agency")
+    )
+  } else {
+    # Return empty sf object
     empty_dt <- data.table(
       unique_shape_id = character(),
       agency = character(),
-      unique_route_id = character(),
-      direction_key = integer(),
-      trips_am = numeric(),
-      trips_pm = numeric()
-    )
-    empty_sf <- st_sf(empty_dt, geometry = st_sfc(crs = 4326))
-    return(empty_sf)
-  }
-
-  # Attach geometry
-  shape_ids <- unique(routes_with_counts$unique_shape_id)
-  shapes_sf <- convert_shapes_to_linestrings(all_shapes[unique_shape_id %in% shape_ids])
-
-  directional_metrics <- merge(
-    shapes_sf,
-    routes_with_counts[, .(
-      unique_shape_id,
-      agency,
-      unique_route_id,
-      direction_key,
-      trips_am,
-      trips_pm
-    )],
-    by = c("unique_shape_id", "agency"),
-    allow.cartesian = TRUE
-  )
-
-  return(directional_metrics)
-}
-
-#' Segment Shapes Into Directional Corridor Sections
-#'
-#' Splits shape geometries into minimal line segments based on overlaps between
-#' routes traveling in the same direction. Calculates combined AM/PM trip totals
-#' for each segment by summing contributing routes (deduplicated by
-#' route/direction).
-#'
-#' @param directional_shapes sf object from build_directional_shape_metrics()
-#' @param coverage_tolerance Numeric between 0 and 1 indicating the minimum
-#'   proportion of a segment that must be covered by a route to be considered
-#'   present on that segment (default: 0.9).
-#' @param min_segment_length_ft Minimum segment length (feet) to keep after
-#'   segmentation (default: 30 feet) to avoid sliver geometries.
-#' @param simplify_tolerance_ft Numeric tolerance (feet) for optional geometry
-#'   simplification prior to segmentation (default: 5). Set to 0 to disable.
-#' @return List with elements:
-#'   - segments_sf: sf object with one row per directional segment and aggregated metrics
-#'   - segments_dt: data.table containing the same attributes (without geometry)
-segment_directional_shapes <- function(directional_shapes,
-                                       coverage_tolerance = 0.9,
-                                       min_segment_length_ft = 30,
-                                       simplify_tolerance_ft = 5) {
-  if (nrow(directional_shapes) == 0) {
-    empty_dt <- data.table(
-      segment_id = character(),
-      agency = character(),
-      direction_key = integer(),
       num_routes = integer(),
       routes = character(),
-      shape_ids = character(),
       trips_am_dir0 = numeric(),
       trips_am_dir1 = numeric(),
       trips_pm_dir0 = numeric(),
@@ -248,367 +228,26 @@ segment_directional_shapes <- function(directional_shapes,
       interval_am_dir0 = numeric(),
       interval_am_dir1 = numeric(),
       interval_pm_dir0 = numeric(),
-      interval_pm_dir1 = numeric(),
-      segment_length_ft = numeric()
+      interval_pm_dir1 = numeric()
     )
-    empty_sf <- st_sf(empty_dt, geometry = st_sfc(crs = 4326))
-    return(list(segments_sf = empty_sf, segments_dt = empty_dt))
+    qualifying_shapes_sf <- st_sf(empty_dt, geometry = st_sfc(crs = 4326))
   }
 
-  directional_dt <- as.data.table(directional_shapes)
-  directional_dt[, direction_key := as.integer(direction_key)]
-
-  # Ensure geometries are valid before segmentation
-  directional_shapes <- st_make_valid(directional_shapes)
-
-  segment_records <- list()
-  geometry_records <- list()
-  seg_index <- 1L
-
-  combos <- unique(directional_dt[, .(agency, direction_key)])
-  setorder(combos, agency, direction_key)
-
-  for (combo_idx in seq_len(nrow(combos))) {
-    agency_id <- combos$agency[combo_idx]
-    direction_id <- combos$direction_key[combo_idx]
-
-    subset_shapes <- directional_shapes[
-      directional_dt$agency == agency_id &
-        directional_dt$direction_key == direction_id, ]
-
-    if (nrow(subset_shapes) == 0) {
-      next
-    }
-
-    # Transform to Illinois State Plane (feet) for precise segmentation
-    subset_proj <- st_transform(subset_shapes, 3435)
-
-    if (!is.null(simplify_tolerance_ft) && simplify_tolerance_ft > 0) {
-      subset_proj$geometry <- st_simplify(
-        subset_proj$geometry,
-        dTolerance = simplify_tolerance_ft,
-        preserveTopology = TRUE
-      )
-    }
-
-    subset_proj$row_id <- seq_len(nrow(subset_proj))
-
-    intersections <- st_intersects(subset_proj, sparse = TRUE)
-    isolated_idx <- which(lengths(intersections) <= 1)
-    overlap_idx <- setdiff(seq_len(nrow(subset_proj)), isolated_idx)
-
-    if (length(isolated_idx) > 0) {
-      iso_subset <- subset_proj[isolated_idx, ]
-      iso_dt <- as.data.table(iso_subset)
-      iso_dt[, row_id := .I]
-
-      iso_summary <- iso_dt[, .(
-        sample_row = first(row_id),
-        total_trips_am = sum(trips_am),
-        total_trips_pm = sum(trips_pm),
-        num_routes = uniqueN(unique_route_id),
-        routes = paste(sort(unique(unique_route_id)), collapse = ";"),
-        shape_ids = paste(sort(unique(unique_shape_id)), collapse = ";")
-      ), by = .(unique_shape_id, direction_key)]
-
-      for (iso_idx in seq_len(nrow(iso_summary))) {
-        sample_row <- iso_summary$sample_row[iso_idx]
-        shape_row <- iso_subset[sample_row, ]
-        seg_length <- as.numeric(st_length(shape_row))
-        if (is.na(seg_length) || seg_length <= 0 || seg_length < min_segment_length_ft) {
-          next
-        }
-
-        total_routes <- iso_summary$num_routes[iso_idx]
-        route_list <- iso_summary$routes[iso_idx]
-        shape_list <- iso_summary$shape_ids[iso_idx]
-        total_trips_am <- iso_summary$total_trips_am[iso_idx]
-        total_trips_pm <- iso_summary$total_trips_pm[iso_idx]
-        dir_id <- iso_summary$direction_key[iso_idx]
-
-        trips_am_dir0 <- if (dir_id == 1L) 0 else total_trips_am
-        trips_am_dir1 <- if (dir_id == 1L) total_trips_am else 0
-        trips_pm_dir0 <- if (dir_id == 1L) 0 else total_trips_pm
-        trips_pm_dir1 <- if (dir_id == 1L) total_trips_pm else 0
-
-        interval_am_dir0 <- if (trips_am_dir0 > 0) 120 / trips_am_dir0 else Inf
-        interval_am_dir1 <- if (trips_am_dir1 > 0) 120 / trips_am_dir1 else Inf
-        interval_pm_dir0 <- if (trips_pm_dir0 > 0) 120 / trips_pm_dir0 else Inf
-        interval_pm_dir1 <- if (trips_pm_dir1 > 0) 120 / trips_pm_dir1 else Inf
-
-        segment_id <- sprintf("%s_dir%s_%05d", agency_id, dir_id, seg_index)
-        seg_index <- seg_index + 1L
-
-        segment_records[[length(segment_records) + 1L]] <- data.table(
-          segment_id = segment_id,
-          agency = agency_id,
-          direction_key = dir_id,
-          num_routes = total_routes,
-          routes = route_list,
-          shape_ids = shape_list,
-          trips_am_dir0 = trips_am_dir0,
-          trips_am_dir1 = trips_am_dir1,
-          trips_pm_dir0 = trips_pm_dir0,
-          trips_pm_dir1 = trips_pm_dir1,
-          interval_am_dir0 = interval_am_dir0,
-          interval_am_dir1 = interval_am_dir1,
-          interval_pm_dir0 = interval_pm_dir0,
-          interval_pm_dir1 = interval_pm_dir1,
-          segment_length_ft = seg_length
-        )
-
-        segment_geom_wgs84 <- st_transform(shape_row, 4326)
-        geometry_records[[length(geometry_records) + 1L]] <- segment_geom_wgs84$geometry[[1]]
-      }
-    }
-
-    if (length(overlap_idx) == 0) {
-      next
-    }
-
-    subset_proj <- subset_proj[overlap_idx, ]
-    subset_proj$row_id <- seq_len(nrow(subset_proj))
-
-    # Node the combined geometry to break at intersections/overlaps
-    combined_geom <- suppressWarnings(st_union(subset_proj$geometry))
-    if (is.null(combined_geom) || length(combined_geom) == 0) {
-      next
-    }
-
-    noded_geom <- tryCatch({
-      lwgeom::st_node(combined_geom)
-    }, error = function(e) {
-      # If st_node fails (e.g., invalid geometries), fall back to st_union result
-      combined_geom
-    })
-
-    segment_lines <- st_collection_extract(noded_geom, "LINESTRING")
-    if (length(segment_lines) == 0) {
-      next
-    }
-
-    segment_sf <- st_sf(
-      data.frame(segment_tmp_id = seq_len(length(segment_lines))),
-      geometry = segment_lines,
-      crs = st_crs(subset_proj)
-    )
-
-    # Drop empty or tiny sliver segments
-    segment_lengths <- as.numeric(st_length(segment_sf))
-    keep_idx <- which(!is.na(segment_lengths) & segment_lengths > 0 &
-                        segment_lengths >= min_segment_length_ft)
-    if (length(keep_idx) == 0) {
-      next
-    }
-    segment_sf <- segment_sf[keep_idx, ]
-    segment_lengths <- segment_lengths[keep_idx]
-
-    # Identify which shapes cover each segment
-    coverage_matrix <- st_intersects(segment_sf, subset_proj, sparse = TRUE)
-
-    for (seg_pos in seq_len(nrow(segment_sf))) {
-      candidate_idx <- coverage_matrix[[seg_pos]]
-      if (length(candidate_idx) == 0) {
-        next
-      }
-
-      seg_geom_proj <- segment_sf[seg_pos, ]
-      seg_length <- segment_lengths[seg_pos]
-      if (seg_length <= 0) {
-        next
-      }
-
-      # Filter shapes that actually cover the majority of the segment
-      coverage_details <- lapply(candidate_idx, function(idx) {
-        shape_geom <- subset_proj[idx, ]
-        intersection_geom <- suppressWarnings(st_intersection(seg_geom_proj, shape_geom))
-        intersection_length <- as.numeric(st_length(intersection_geom))
-        coverage_ratio <- if (seg_length > 0) intersection_length / seg_length else 0
-        list(idx = idx, coverage = coverage_ratio)
-      })
-
-      coverage_ratios <- sapply(coverage_details, function(x) x$coverage)
-      valid_idx <- vapply(coverage_details, function(x) {
-        x$coverage >= coverage_tolerance
-      }, logical(1))
-
-      if (!any(valid_idx)) {
-        # Retain the shape with the highest coverage if none pass tolerance
-        max_idx <- which.max(coverage_ratios)
-        valid_idx <- rep(FALSE, length(candidate_idx))
-        valid_idx[max_idx] <- TRUE
-      }
-
-      selected_rows <- vapply(coverage_details[valid_idx], function(x) x$idx, integer(1))
-      covering_shapes <- subset_proj[selected_rows, ]
-      covering_dt <- as.data.table(covering_shapes)
-
-      if (nrow(covering_dt) == 0) {
-        next
-      }
-
-      # Deduplicate by route/direction to avoid double counting variants
-      covering_unique <- unique(covering_dt[, .(
-        unique_route_id,
-        direction_key,
-        trips_am,
-        trips_pm
-      )], by = c("unique_route_id", "direction_key"))
-
-      shape_list <- paste(sort(unique(covering_dt$unique_shape_id)), collapse = ";")
-
-      total_trips_am <- sum(covering_unique$trips_am)
-      total_trips_pm <- sum(covering_unique$trips_pm)
-      total_routes <- uniqueN(covering_unique$unique_route_id)
-      route_list <- paste(sort(unique(covering_unique$unique_route_id)), collapse = ";")
-
-      # Populate direction-aware columns
-      trips_am_dir0 <- if (direction_id == 1L) 0 else total_trips_am
-      trips_am_dir1 <- if (direction_id == 1L) total_trips_am else 0
-      trips_pm_dir0 <- if (direction_id == 1L) 0 else total_trips_pm
-      trips_pm_dir1 <- if (direction_id == 1L) total_trips_pm else 0
-
-      interval_am_dir0 <- if (trips_am_dir0 > 0) 120 / trips_am_dir0 else Inf
-      interval_am_dir1 <- if (trips_am_dir1 > 0) 120 / trips_am_dir1 else Inf
-      interval_pm_dir0 <- if (trips_pm_dir0 > 0) 120 / trips_pm_dir0 else Inf
-      interval_pm_dir1 <- if (trips_pm_dir1 > 0) 120 / trips_pm_dir1 else Inf
-
-      segment_id <- sprintf("%s_dir%s_%05d", agency_id, direction_id, seg_index)
-      seg_index <- seg_index + 1L
-
-      segment_records[[length(segment_records) + 1L]] <- data.table(
-        segment_id = segment_id,
-        agency = agency_id,
-        direction_key = direction_id,
-        num_routes = total_routes,
-        routes = route_list,
-        shape_ids = shape_list,
-        trips_am_dir0 = trips_am_dir0,
-        trips_am_dir1 = trips_am_dir1,
-        trips_pm_dir0 = trips_pm_dir0,
-        trips_pm_dir1 = trips_pm_dir1,
-        interval_am_dir0 = interval_am_dir0,
-        interval_am_dir1 = interval_am_dir1,
-        interval_pm_dir0 = interval_pm_dir0,
-        interval_pm_dir1 = interval_pm_dir1,
-        segment_length_ft = seg_length
-      )
-
-      segment_geom_wgs84 <- st_transform(seg_geom_proj, 4326)
-      geometry_records[[length(geometry_records) + 1L]] <- segment_geom_wgs84$geometry[[1]]
-    }
-  }
-
-  if (length(segment_records) == 0) {
-    empty_dt <- data.table(
-      segment_id = character(),
-      agency = character(),
-      direction_key = integer(),
-      num_routes = integer(),
-      routes = character(),
-      shape_ids = character(),
-      trips_am_dir0 = numeric(),
-      trips_am_dir1 = numeric(),
-      trips_pm_dir0 = numeric(),
-      trips_pm_dir1 = numeric(),
-      interval_am_dir0 = numeric(),
-      interval_am_dir1 = numeric(),
-      interval_pm_dir0 = numeric(),
-      interval_pm_dir1 = numeric(),
-      segment_length_ft = numeric()
-    )
-    empty_sf <- st_sf(empty_dt, geometry = st_sfc(crs = 4326))
-    return(list(segments_sf = empty_sf, segments_dt = empty_dt))
-  }
-
-  segments_dt <- rbindlist(segment_records)
-  segments_sf <- st_sf(
-    as.data.frame(segments_dt),
-    geometry = st_sfc(geometry_records, crs = 4326)
-  )
-
-  return(list(segments_sf = segments_sf, segments_dt = segments_dt))
-}
-
-#' Identify Overlapping Route Segments with Combined Frequency
-#'
-#' Finds where bus route geometries overlap spatially and calculates combined
-#' frequencies by direction. Routes on the same street qualify together if their
-#' combined frequency (summing trips across routes) meets the threshold.
-#'
-#' @param route_trips data.table with trip counts (from calculate_route_trip_counts)
-#' @param all_trips data.table with all trips (to get unique_shape_id)
-#' @param all_shapes data.table with GTFS shapes
-#' @param max_interval_minutes Numeric. Maximum service interval (default: 15)
-#' @param coverage_tolerance Proportion of a segment that must be shared to
-#'   count a route in the combined frequency (default: 0.9)
-#' @param min_segment_length_ft Minimum segment length (feet) to retain after
-#'   segmentation (default: 30)
-#' @param simplify_tolerance_ft Geometry simplification tolerance in feet
-#'   applied before segmentation (default: 5). Set to 0 to disable.
-#' @return List with:
-#'   - qualifying_shapes: sf object with shapes that qualify (either individually or as overlaps)
-#'   - qualification_summary: data.table with diagnostic info
-identify_overlapping_segments <- function(route_trips, all_trips, all_shapes,
-                                          max_interval_minutes = 15,
-                                          coverage_tolerance = 0.9,
-                                          min_segment_length_ft = 30,
-                                          simplify_tolerance_ft = 5) {
-  cat("\n=== Identifying Overlapping Route Segments ===\n\n")
-
-  # Build route/shape/direction metrics
-  directional_shapes <- build_directional_shape_metrics(route_trips, all_trips, all_shapes)
-  cat(sprintf("Directional route-shape combinations: %d\n", nrow(directional_shapes)))
-
-  # Segment overlaps and aggregate combined frequencies
-  segment_results <- segment_directional_shapes(
-    directional_shapes,
-    coverage_tolerance = coverage_tolerance,
-    min_segment_length_ft = min_segment_length_ft,
-    simplify_tolerance_ft = simplify_tolerance_ft
-  )
-  segments_sf <- segment_results$segments_sf
-  segments_dt <- segment_results$segments_dt
-
-  if (nrow(segments_dt) == 0) {
-    cat("No qualifying corridor segments identified.\n")
-    return(list(
-      qualifying_shapes = segments_sf[0, ],
-      qualification_summary = segments_dt[0]
-    ))
-  }
-
-  # Apply qualification threshold
-  segments_dt[, qualifies := (interval_am_dir0 <= max_interval_minutes) |
-                               (interval_am_dir1 <= max_interval_minutes) |
-                               (interval_pm_dir0 <= max_interval_minutes) |
-                               (interval_pm_dir1 <= max_interval_minutes)]
-  segments_sf$qualifies <- segments_dt$qualifies
-
-  qualifying_shapes_sf <- segments_sf[segments_sf$qualifies, ]
-  qualification_summary <- segments_dt[qualifies == TRUE,
-                                       .(
-                                         segment_id,
-                                         agency,
-                                         direction_key,
-                                         num_routes,
-                                         routes,
-                                         shape_ids,
-                                         trips_am_dir0,
-                                         trips_am_dir1,
-                                         trips_pm_dir0,
-                                         trips_pm_dir1,
-                                         interval_am_dir0,
-                                         interval_am_dir1,
-                                         interval_pm_dir0,
-                                         interval_pm_dir1,
-                                         segment_length_ft
-                                       )]
-
-  cat(sprintf("Qualifying corridor segments: %d (out of %d total)\n",
-              nrow(qualifying_shapes_sf), nrow(segments_sf)))
-  cat(sprintf("  Single-route segments: %d\n", sum(qualification_summary$num_routes == 1)))
-  cat(sprintf("  Multi-route segments: %d\n", sum(qualification_summary$num_routes > 1)))
+  # Create qualification summary
+  qualification_summary <- qualifying_metrics[, .(
+    unique_shape_id,
+    agency,
+    num_routes,
+    routes,
+    trips_am_dir0,
+    trips_am_dir1,
+    trips_pm_dir0,
+    trips_pm_dir1,
+    interval_am_dir0,
+    interval_am_dir1,
+    interval_pm_dir0,
+    interval_pm_dir1
+  )]
 
   return(list(
     qualifying_shapes = qualifying_shapes_sf,

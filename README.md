@@ -364,7 +364,7 @@ Transit Hubs (rail + qualifying bus hubs)
     │
     └──→ identify_qualifying_corridors() [R/corridor_processing.R]
            ├─ Builds direction-aware trip metrics per route + shape
-           ├─ Optionally simplifies shapes (5 ft tolerance) and splits overlaps into directional segments
+           ├─ Optionally simplifies shapes (5 ft tolerance) and splits overlaps into directional segments (with small tolerance for shape misalignment)
            ├─ Aggregates trips per segment/direction and keeps those with ≤15 min headways
            └─ create_corridor_buffers()
               ├─ Buffers only qualifying segments by 680 ft (660 ft + 20 ft street width)

@@ -479,22 +479,28 @@ This analysis implements the following methodology to identify qualifying transi
 
 **Corridor Identification & Buffering Workflow:**
 
-1. **Directional trip metrics:** For every route we count unique trips by direction (when available) during the AM and PM peaks and attach those counts to the GTFS shape used by the trip.
-2. **Geometry preparation:** Shapes are converted to LINESTRING geometries in Illinois State Plane feet. An optional simplification step (default tolerance = 5 feet) removes redundant vertices while keeping alignment with the street network.
-3. **Segment segmentation:** Within each agency and direction we split shapes into minimal segments:
-   - Segments used by only a single route remain intact (no expensive overlap processing).
-   - Where multiple routes share the same roadway the combined geometry is "noded" (via `lwgeom::st_node`) so every overlapping stretch becomes its own segment.
-4. **Directional aggregation:** For each segment we sum trips across the covering routes **within the same direction** and compute AM/PM headways. Only the segments where any direction in either peak has headway ≤ 15 minutes qualify as corridors.
-5. **Buffering:** Qualified segments are buffered by **680 feet** (660 ft = 1/8 mile from curb + 20 ft half street width) and clipped to the Illinois boundary.
+1. **Route-level trip counting:** For every bus route, count unique trips by direction (when available) during AM and PM peaks
+2. **Shape-level aggregation:** Group routes by their GTFS shape_id (which represents the specific path a route follows)
+   - Multiple routes sharing the same shape_id are running on the same street
+   - Sum trips across all routes using each shape, within each direction
+   - Calculate combined frequency for each direction/peak combination
+3. **Qualification:** A shape qualifies as a corridor if **ANY** direction in **ANY** peak has combined frequency ≤15 minutes
+4. **Geometry conversion:** Qualifying shapes are converted from GTFS point sequences to LINESTRING geometries
+5. **Buffering:** Qualified route geometries are buffered by **680 feet** (660 ft = 1/8 mile from curb + 20 ft half street width) and clipped to the Illinois boundary
 
-This segment-based approach means:
+**Key advantages of shape-based aggregation:**
 
-- Only the exact portions of streets with combined frequent service are buffered.
-- Overlaps count only where they physically occur — a route that briefly shares a street with another inherits the combined frequency **only** on the shared blocks.
-- Performance improves because large, non-overlapping shapes skip the intersection-heavy processing entirely.
-- Geometry simplification keeps computation tractable while staying within a 5-foot tolerance (set to 0 for maximum fidelity if needed).
+- **Natural grouping**: GTFS shape_id already identifies routes on the same street - no complex geometric intersection needed
+- **Accurate**: Uses actual vehicle paths from GTFS, not approximations
+- **Efficient**: Simple aggregation instead of geometric segmentation
+- **Clear interpretation**: If Route A and Route B use shape "Main_St_NB", they're on the same street
 
-Street-width assumptions remain unchanged: 20 feet is a conservative half-width that covers most Illinois street types (local and arterial) per AASHTO guidance.
+**Example:**
+- Route 12 (DeKalb): 3 AM trips, uses shape "route_12_shape_1"
+- Route 8 (DeKalb): 5 AM trips, also uses shape "route_12_shape_1"
+- Combined: 8 AM trips → 120 min / 8 trips = **15 minute frequency** → Qualifies!
+
+Street-width assumptions: 20 feet is a conservative half-width that covers most Illinois street types (local and arterial) per AASHTO guidance.
 
 **Geographic Boundaries and Clipping:**
 
