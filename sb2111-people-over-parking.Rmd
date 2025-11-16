@@ -226,12 +226,12 @@ corridor_results <- identify_qualifying_corridors(
   all_trips, all_shapes
 )
 
-qualifying_corridor_shapes_sf <- corridor_results$qualifying_corridor_shapes
+qualifying_corridor_segments_sf <- corridor_results$qualifying_corridor_segments
 corridor_qualification_summary <- corridor_results$qualification_summary
 
 # Create corridor buffers (1/8 mile along actual route geometry from GTFS shapes)
 all_corridors_union_wgs84 <- create_corridor_buffers(
-  qualifying_corridor_shapes_sf,
+  qualifying_corridor_segments_sf,
   illinois_boundary
 )
 
@@ -289,7 +289,7 @@ pct_combined <- as.numeric(combined_area_sqmi) / total_il_area_sqmi * 100
 
 # Count hubs and routes
 hub_counts <- table(all_hubs_sf$agency_name)
-qualifying_corridor_shape_count <- nrow(qualifying_corridor_shapes_sf)
+qualifying_corridor_segment_count <- nrow(qualifying_corridor_segments_sf)
 ```
 
 ```{r create_map}
@@ -313,7 +313,7 @@ map
 
 ```{r summary_stats, include=FALSE}
 # Generate all summary statistics
-stats <- generate_summary_statistics(all_hubs_sf, qualifying_corridor_shapes_sf)
+stats <- generate_summary_statistics(all_hubs_sf, qualifying_corridor_segments_sf)
 
 # Extract summary variables for use in inline R code
 bus_hub_summary <- stats$bus_hub_summary
@@ -333,7 +333,7 @@ rmtd_corridor <- stats$rmtd_corridor
 rail_hub_counts <- stats$rail_hub_counts
 qualifying_bus_hubs <- stats$qualifying_bus_hubs
 rail_stops <- stats$rail_stops
-qualifying_corridor_shapes <- stats$qualifying_corridor_shapes
+qualifying_corridor_segments <- stats$qualifying_corridor_segments
 ```
 
 ### Summary Statistics

@@ -530,7 +530,7 @@ download_tiger_streets <- function(counties_fips, year = 2023) {
 #' @param all_trips Combined trips data.table (to link routes to shapes)
 #' @param all_shapes Combined shapes data.table (for route geometries)
 #' @return List with:
-#'   - qualifying_corridor_shapes: sf object with qualifying route shape geometries
+#'   - qualifying_corridor_segments: sf object with qualifying corridor segments
 #'   - qualification_summary: data.table with diagnostic information
 #'
 #' @details
@@ -567,13 +567,13 @@ identify_qualifying_corridors <- function(all_stops, am_peak_bus_stops, pm_peak_
   # Identify overlapping segments with combined frequency
   overlap_results <- identify_overlapping_segments(route_trips, all_trips, all_shapes)
 
-  qualifying_corridor_shapes_sf <- overlap_results$qualifying_shapes
+  qualifying_corridor_segments_sf <- overlap_results$qualifying_shapes
   qualification_summary <- overlap_results$qualification_summary
 
-  cat(sprintf("\nTotal qualifying corridor shapes: %d\n", nrow(qualifying_corridor_shapes_sf)))
+  cat(sprintf("\nTotal qualifying corridor segments: %d\n", nrow(qualifying_corridor_segments_sf)))
 
   return(list(
-    qualifying_corridor_shapes = qualifying_corridor_shapes_sf,
+    qualifying_corridor_segments = qualifying_corridor_segments_sf,
     qualification_summary = qualification_summary
   ))
 }
@@ -689,22 +689,24 @@ convert_shapes_to_linestrings <- function(all_shapes) {
   return(shapes_sf)
 }
 
-#' Create Corridor Buffers Using GTFS Route Shapes
+#' Create Corridor Buffers from Qualifying Segments
 #'
-#' Creates 1/8 mile buffers around actual transit route paths using GTFS
-#' shapes.txt geometry, measured from the street edge rather than centerline.
-#' This approach buffers only routes that meet direction-aware combined frequency
-#' criteria.
+#' Creates 1/8 mile buffers around the **qualifying street segments** returned by
+#' `identify_overlapping_segments()`. Only the overlapping portions that meet
+#' the direction-aware, combined-frequency test are buffered, preventing the
+#' inflation that occurs when entire route shapes are buffered after a single
+#' qualifying overlap.
 #'
-#' @param qualifying_corridor_shapes_sf sf object with qualifying corridor route shapes
+#' @param qualifying_corridor_segments_sf sf object with qualifying corridor
+#'   segments (output of identify_overlapping_segments)
 #' @param illinois_boundary sf object with Illinois state boundary
 #' @return sf object with buffered corridor geometry (WGS84)
 #'
 #' @details
 #' This function:
 #' \enumerate{
-#'   \item Takes qualifying route shapes (already filtered by combined frequency)
-#'   \item Buffers each route path by 680 feet (660ft + 20ft for street width)
+#'   \item Takes only the street segments that satisfied the corridor frequency test
+#'   \item Buffers each segment by 680 feet (660ft + 20ft for street width)
 #'   \item Unions overlapping buffers
 #'   \item Clips to Illinois boundary
 #' }
@@ -723,18 +725,36 @@ convert_shapes_to_linestrings <- function(all_shapes) {
 #' @examples
 #' \dontrun{
 #' corridor_buffer <- create_corridor_buffers(
-#'   qualifying_corridor_shapes_sf,
+#'   qualifying_corridor_segments_sf,
 #'   illinois_boundary
 #' )
 #' }
-create_corridor_buffers <- function(qualifying_corridor_shapes_sf, illinois_boundary) {
-  cat("\n=== Creating Corridor Buffers from Qualifying Shapes ===\n\n")
+create_corridor_buffers <- function(qualifying_corridor_segments_sf, illinois_boundary) {
+  cat("\n=== Creating Corridor Buffers from Qualifying Segments ===\n\n")
 
-  cat(sprintf("Qualifying corridor shapes to buffer: %d\n", nrow(qualifying_corridor_shapes_sf)))
+  if (!inherits(qualifying_corridor_segments_sf, "sf")) {
+    stop("qualifying_corridor_segments_sf must be an sf object of qualifying segments")
+  }
+
+  # Keep only non-empty geometries and ensure we buffer just the qualifying segments
+  qualifying_corridor_segments_sf <- qualifying_corridor_segments_sf[!st_is_empty(qualifying_corridor_segments_sf), ]
+
+  if (nrow(qualifying_corridor_segments_sf) == 0) {
+    warning("No qualifying corridor segments available to buffer")
+    return(st_sf(geometry = st_sfc(crs = st_crs(4326))))
+  }
+
+  cat(sprintf("Qualifying corridor segments to buffer: %d\n", nrow(qualifying_corridor_segments_sf)))
+
+  # Standardize to LINESTRING-only geometries so buffering is limited to the
+  # qualifying street pieces
+  qualifying_corridor_segments_sf <- st_collection_extract(qualifying_corridor_segments_sf, "LINESTRING", warn = FALSE)
+  qualifying_corridor_segments_sf <- st_cast(qualifying_corridor_segments_sf, "LINESTRING", warn = FALSE)
+  qualifying_corridor_segments_sf <- st_make_valid(qualifying_corridor_segments_sf)
 
   # Project to Illinois State Plane (feet) for accurate buffering
   cat("Buffering route geometries by 1/8 mile from street edge...\n")
-  shapes_projected <- st_transform(qualifying_corridor_shapes_sf, 3435)
+  shapes_projected <- st_transform(qualifying_corridor_segments_sf, 3435)
 
   # Adjust buffer to measure from street edge rather than route centerline
   # Add conservative estimate of half-street-width (centerline to curb)
