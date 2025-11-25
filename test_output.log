@@ -1,0 +1,18 @@
+Loading data for corridor testing...
+
+Sourcing R modules...
+
+Downloading Illinois boundary...
+
+Getting agency configurations...
+
+Processing GTFS data (this may take a few minutes)...
+Error in process_agencies_with_tidytransit(agency_configs, validate = TRUE) : 
+  could not find function "process_agencies_with_tidytransit"
+Calls: source -> withVisible -> eval -> eval
+In addition: Warning messages:
+1: package 'sf' was built under R version 4.3.3 
+2: package 'data.table' was built under R version 4.3.3 
+3: package 'tidytransit' was built under R version 4.3.3 
+4: package 'zip' was built under R version 4.3.3 
+Execution halted

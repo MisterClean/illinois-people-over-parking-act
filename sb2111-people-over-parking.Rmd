@@ -201,6 +201,7 @@ if (has_direction_id) {
 ## Identify Public Transportation Hubs
 
 # Identify all transit hubs (rail stations + qualifying bus hubs)
+# Now uses representative weekday service selection per agency
 hub_results <- identify_all_hubs(
   all_stops, all_routes, all_trips,
   all_stop_times, all_calendar, all_calendar_dates
@@ -220,7 +221,8 @@ cat(sprintf("Hubs after filtering to Illinois boundary: %d\n", nrow(all_hubs_sf)
 ```{r process_corridors_and_buffers, results='hide'}
 ## Identify Corridors and Create Buffers
 
-# Identify qualifying transit corridors (direction-aware combined frequency)
+# Identify qualifying transit corridors (edge-based method with agency-specific processing)
+# PACE and CTA are processed together (can overlap), other agencies separately
 corridor_results <- identify_qualifying_corridors(
   all_stops, am_peak_bus_stops, pm_peak_bus_stops,
   all_trips, all_shapes
@@ -278,170 +280,56 @@ combined_area_sqmi <- units::set_units(combined_area_sqft, "mi^2")
 # Rockford: Winnebago County: 519
 chicago_il_msa_area_sqmi <- 953.6 + 336.5 + 524.2 + 470 + 611 + 849.2
 stlouis_il_msa_area_sqmi <- 674.6 + 741.5 + 398.2
-champaign_area_sqmi <- 1008
-rockford_area_sqmi <- 519
-total_il_area_sqmi <- chicago_il_msa_area_sqmi + stlouis_il_msa_area_sqmi + champaign_area_sqmi + rockford_area_sqmi
 
-# Calculate percentages (against total IL area covered)
-pct_hubs <- as.numeric(hub_area_sqmi) / total_il_area_sqmi * 100
-pct_corridors <- as.numeric(corridor_area_sqmi) / total_il_area_sqmi * 100
-pct_combined <- as.numeric(combined_area_sqmi) / total_il_area_sqmi * 100
+# Calculate summary statistics
+total_rail_hubs <- nrow(all_hubs_sf[all_hubs_sf$type == "rail", ])
+total_bus_hubs <- nrow(all_hubs_sf[all_hubs_sf$type == "bus_hub", ])
+total_qualifying_segments <- nrow(qualifying_corridor_segments_sf)
+```
 
-# Count hubs and routes
-hub_counts <- table(all_hubs_sf$agency_name)
-qualifying_corridor_segment_count <- nrow(qualifying_corridor_segments_sf)
+```{r summary_table}
+# Create summary table for display
+summary_data <- data.frame(
+  Category = c("Rail Stations", "Qualifying Bus Hubs", "Qualifying Corridor Segments",
+               "Hub Buffer Area", "Corridor Buffer Area", "Total Affected Area"),
+  Count = c(total_rail_hubs, total_bus_hubs, total_qualifying_segments,
+            round(as.numeric(hub_area_sqmi), 1),
+            round(as.numeric(corridor_area_sqmi), 1),
+            round(as.numeric(combined_area_sqmi), 1)),
+  Units = c("stations", "hub clusters", "edge segments",
+            "sq mi", "sq mi", "sq mi")
+)
+
+kable(summary_data, caption = "Transit Hub and Corridor Summary") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
 ```
 
 ```{r create_map}
-# Create the interactive map (now with dynamic agency handling)
-invisible(capture.output(
-  map <- create_interactive_map(
-    all_hubs_sf,
-    all_affected_areas_combined,
-    hub_buffers,  # Now accepts full buffer object
-    all_corridors_union_wgs84,
-    illinois_boundary,  # Add Illinois state outline
-    center_lng = -87.6079,
-    center_lat = 41.8917,
-    zoom = 9
-  )
-))
+## Create Interactive Map
 
-# Display the map
-map
-```
-
-```{r summary_stats, include=FALSE}
-# Generate all summary statistics
-stats <- generate_summary_statistics(all_hubs_sf, qualifying_corridor_segments_sf)
-
-# Extract summary variables for use in inline R code
-bus_hub_summary <- stats$bus_hub_summary
-corridor_summary <- stats$corridor_summary
-rail_hub_count <- stats$rail_hub_count
-total_hubs <- stats$total_hubs
-cta_hub <- stats$cta_hub
-pace_hub <- stats$pace_hub
-metro_stl_hub <- stats$metro_stl_hub
-cumtd_hub <- stats$cumtd_hub
-rmtd_hub <- stats$rmtd_hub
-cta_corridor <- stats$cta_corridor
-pace_corridor <- stats$pace_corridor
-metro_stl_corridor <- stats$metro_stl_corridor
-cumtd_corridor <- stats$cumtd_corridor
-rmtd_corridor <- stats$rmtd_corridor
-rail_hub_counts <- stats$rail_hub_counts
-qualifying_bus_hubs <- stats$qualifying_bus_hubs
-rail_stops <- stats$rail_stops
-qualifying_corridor_segments <- stats$qualifying_corridor_segments
-```
-
-### Summary Statistics
-
-```{r agency_summary_table, echo=FALSE}
-# Calculate per-agency relief areas
-agency_metadata <- get_agency_metadata()
-agency_ids <- get_all_agency_ids()
-
-# Build summary table
-agency_summary <- data.frame(
-  Agency = character(),
-  `Bus Hubs` = integer(),
-  `Rail Hubs` = integer(),
-  `Bus Stops in Hubs` = integer(),
-  `Relief Area (sq mi)` = numeric(),
-  stringsAsFactors = FALSE,
-  check.names = FALSE
+# Create the interactive map using the map creation module
+final_map <- create_interactive_map(
+  all_hubs_sf = all_hubs_sf,
+  all_affected_areas = all_affected_areas_combined,
+  hub_buffers = hub_buffers,
+  all_corridors_union = all_corridors_union_wgs84,
+  illinois_boundary = illinois_boundary
 )
 
-for (agency_id in agency_ids) {
-  # Get display name
-  agency_name <- get_agency_display_name(agency_id)
-
-  # Bus hubs count
-  bus_hubs <- if (agency_id %in% bus_hub_summary$agency) {
-    bus_hub_summary[bus_hub_summary$agency == agency_id, ]$unique_clusters
-  } else {
-    0
-  }
-
-  # Rail hubs count
-  rail_hubs <- if (agency_id %in% names(rail_hub_counts)) {
-    as.integer(rail_hub_counts[agency_id])
-  } else {
-    0
-  }
-
-  # Bus stops in hubs
-  bus_stops <- if (agency_id %in% bus_hub_summary$agency) {
-    bus_hub_summary[bus_hub_summary$agency == agency_id, ]$total_stops
-  } else {
-    0
-  }
-
-  # Calculate relief area for this agency
-  if (agency_id %in% names(hub_buffers$per_agency_union)) {
-    agency_buffer <- hub_buffers$per_agency_union[[agency_id]]
-    area_sqmi <- as.numeric(units::set_units(st_area(agency_buffer), "mi^2"))
-  } else {
-    area_sqmi <- 0
-  }
-
-  # Add row to summary table
-  agency_summary <- rbind(agency_summary, data.frame(
-    Agency = agency_name,
-    `Bus Hubs` = bus_hubs,
-    `Rail Hubs` = rail_hubs,
-    `Bus Stops in Hubs` = bus_stops,
-    `Relief Area (sq mi)` = area_sqmi,
-    stringsAsFactors = FALSE,
-    check.names = FALSE
-  ))
-}
-
-# Add totals row
-agency_summary <- rbind(agency_summary, data.frame(
-  Agency = "**TOTAL**",
-  `Bus Hubs` = sum(agency_summary$`Bus Hubs`),
-  `Rail Hubs` = sum(agency_summary$`Rail Hubs`),
-  `Bus Stops in Hubs` = sum(agency_summary$`Bus Stops in Hubs`),
-  `Relief Area (sq mi)` = sum(agency_summary$`Relief Area (sq mi)`),
-  stringsAsFactors = FALSE,
-  check.names = FALSE
-))
-
-# Format and display table
-knitr::kable(
-  agency_summary,
-  format = "html",
-  align = c("l", "r", "r", "r", "r"),
-  digits = 2,
-  format.args = list(big.mark = ","),
-  caption = "Transit Agency Summary: People Over Parking Act Impact"
-) %>%
-  kableExtra::kable_styling(
-    bootstrap_options = c("striped", "hover", "condensed"),
-    full_width = FALSE,
-    position = "left"
-  ) %>%
-  kableExtra::row_spec(nrow(agency_summary), bold = TRUE, background = "#f0f0f0")
+final_map
 ```
-
-This analysis examines the potential impact of new legislation passed in Illinois (SB2111) on Chicagoland.
-
-According to the updated bill [10400SB2111ham003](https://www.ilga.gov/documents/legislation/104/SB/PDF/10400SB2111ham003.pdf), minimum parking requirements are prohibited for development projects located within:
-
-- **1/2 mile of public transportation hubs**, defined as:
-  - (i) A rail transit station
-  - (ii) A boat or ferry terminal served by either a bus connection stop or rail transit station
-  - (iii) An intersection of 2 or more bus routes with a **combined frequency** of service interval of 15 minutes or less during peak commute periods
-
-- **1/8 mile of public transportation corridors**, defined as:
-  - A street on which there is **one or more bus routes** with a **combined frequency** of bus service interval of 15 minutes or less during the morning and afternoon peak commute periods
 
 ### Methodology
 
 This analysis implements the following methodology to identify qualifying transit hubs and corridors:
+
+**Representative Service Selection:**
+
+-   For each transit agency, we select a **single representative weekday service_id** rather than combining all weekday services
+-   This prevents inflating trip counts when agencies define the same schedule multiple times for different calendar dates
+-   Selection strategy: Find services running on the next upcoming Tuesday (a typical weekday), or the most recent Tuesday if none upcoming
+-   If multiple services run on the same day, the service with the most trips is selected
+-   This ensures frequency calculations reflect actual service levels, not artifacts of how calendar data is structured
 
 **Peak Period Definition:**
 
@@ -463,13 +351,20 @@ This analysis implements the following methodology to identify qualifying transi
 -   This helps ensure routes truly intersect at the location, not just have nearby stops within 150 feet
 -   Example: Route A stops at "State & Madison", Route B stops at "State & Monroe" (both within 150ft) → they share "State" street → overlap verified
 
-**Combined Frequency Calculation (Hubs + Corridors):**
+**Edge-Based Corridor Identification:**
 
--   For each stop cluster (hub) we count unique weekday trips during the AM and PM peaks
--   For corridors we first map trips to their GTFS shapes and split those shapes into **directional segments** that represent the exact portion of a street where one or more routes actually overlap
+-   Corridors are identified using an **edge-based methodology** that tracks service between consecutive stop clusters
+-   For each trip during peak periods, we create directed edges between consecutive clustered stops
+-   Edges are aggregated by (from_cluster, to_cluster, direction_id) to calculate combined frequency
+-   This captures the actual path of transit service and correctly handles multi-route overlapping segments
 -   **Direction-aware**: Trips are always summed separately by direction (e.g., northbound vs southbound) so opposite-direction service never inflates frequency
 -   Combined service interval = peak period duration (120 min) ÷ total trips in that direction
--   Example: Route A (4 northbound AM trips) + Route B (4 northbound AM trips) on the same northbound street segment = 8 northbound AM trips → 120 ÷ 8 = **15 minute combined interval**
+
+**Agency-Specific Processing (Performance Optimization):**
+
+-   To improve performance with large datasets, corridors are processed separately for each agency
+-   **Exception**: PACE and CTA are processed together since their routes can overlap in the Chicago suburbs
+-   This ensures overlapping routes from different agencies are correctly combined while avoiding expensive cross-agency comparisons where overlap is impossible
 
 **Qualification Criteria:**
 
@@ -488,28 +383,26 @@ This analysis implements the following methodology to identify qualifying transi
   - This reflects actual transit availability: if you're waiting for a northbound bus, you can take any northbound route
   - Opposite directions are never combined (bi-directional service is kept separate)
 
-**Corridor Identification & Buffering Workflow:**
+**Edge Geometry Creation:**
 
-1. **Route-level trip counting:** For every bus route, count unique trips by direction (when available) during AM and PM peaks
-2. **Shape-level aggregation:** Group routes by their GTFS shape_id (which represents the specific path a route follows)
-   - Multiple routes sharing the same shape_id are running on the same street
-   - Sum trips across all routes using each shape, within each direction
-   - Calculate combined frequency for each direction/peak combination
-3. **Qualification:** A shape qualifies as a corridor if **ANY** direction in **ANY** peak has combined frequency ≤15 minutes
-4. **Geometry conversion:** Qualifying shapes are converted from GTFS point sequences to LINESTRING geometries
-5. **Buffering:** Qualified route geometries are buffered by **680 feet** (660 ft = 1/8 mile from curb + 20 ft half street width) and clipped to the Illinois boundary
+1. **Stop clustering:** Group nearby stops into clusters representing physical intersections
+2. **Edge building:** Create edges between consecutive clusters along each trip
+3. **Aggregation:** Sum trips across all routes using each edge, within each direction/peak
+4. **Shape extraction:** Use GTFS shapes.txt to create accurate edge geometries following actual vehicle paths
+5. **Qualification:** Edges qualify if combined frequency ≤15 minutes in any direction/peak
+6. **Buffering:** Qualified edges are buffered by **680 feet** (660 ft = 1/8 mile + 20 ft half street width) and clipped to Illinois boundary
 
-**Key advantages of shape-based aggregation:**
+**Key advantages of edge-based methodology:**
 
-- **Natural grouping**: GTFS shape_id already identifies routes on the same street - no complex geometric intersection needed
-- **Accurate**: Uses actual vehicle paths from GTFS, not approximations
-- **Efficient**: Simple aggregation instead of geometric segmentation
-- **Clear interpretation**: If Route A and Route B use shape "Main_St_NB", they're on the same street
+- **Accurate frequency**: Counts actual trips between specific locations, not just at stops
+- **Natural overlaps**: Multiple routes using the same segment are automatically combined
+- **Shape-based geometry**: Edge segments use GTFS shapes for accurate route paths
+- **Direction awareness**: Properly separates opposite-direction service
 
 **Example:**
-- Route 12 (DeKalb): 3 AM trips, uses shape "route_12_shape_1"
-- Route 8 (DeKalb): 5 AM trips, also uses shape "route_12_shape_1"
-- Combined: 8 AM trips → 120 min / 8 trips = **15 minute frequency** → Qualifies!
+- Route 8: 4 northbound AM trips between Stop A → Stop B
+- Route 11: 4 northbound AM trips between Stop A → Stop B (same segment)
+- Combined: 8 northbound AM trips → 120 min / 8 trips = **15 minute combined interval** → Qualifies!
 
 Street-width assumptions: 20 feet is a conservative half-width that covers most Illinois street types (local and arterial) per AASHTO guidance.
 
@@ -527,7 +420,7 @@ Senate Bill 2111 contains three ambiguities that significantly affect which area
 
 **1. "Intersecting routes"**: The statute refers to "an intersection of 2 or more bus routes" but does not specify whether this means routes that physically cross each other at a road intersection, or whether it includes routes that overlap on the same street without crossing. **Our interpretation**: Routes must serve stops at the same street intersection (verified through spatial clustering within 150 feet combined with street name matching). Alternative interpretations counting parallel routes on the same street would dramatically expand qualifying areas.
 
-**2. "Combined frequency"**: The statute specifies "combined frequency of service interval" but does not define how frequencies from multiple routes should be combined. Should two routes with 30-minute headways be considered as 30-minute combined service, or 15-minute combined service? **Our interpretation**: We sum total trips across all routes during peak periods in a direction-aware manner (e.g., two routes with 30-minute northbound frequency = 4 northbound trips/hour each = 8 northbound trips/hour = 15-minute combined northbound interval). For corridors, routes sharing the same street geometry qualify together if their combined frequency (within each direction) meets the threshold, and we split those geometries into directional segments so the combined headway only applies to the exact blocks where routes overlap. Alternative interpretations using averaged frequencies or minimum headways would result in substantially fewer qualifying locations.
+**2. "Combined frequency"**: The statute specifies "combined frequency of service interval" but does not define how frequencies from multiple routes should be combined. Should two routes with 30-minute headways be considered as 30-minute combined service, or 15-minute combined service? **Our interpretation**: We sum total trips across all routes during peak periods in a direction-aware manner (e.g., two routes with 30-minute northbound frequency = 4 northbound trips/hour each = 8 northbound trips/hour = 15-minute combined northbound interval). For corridors, routes sharing the same segment qualify together if their combined frequency (within each direction) meets the threshold. Alternative interpretations using averaged frequencies or minimum headways would result in substantially fewer qualifying locations.
 
 **3. Stop clustering and directionality**: The statute does not specify whether routes must share the exact same stop_id to qualify as "intersecting," or whether nearby stops serving the same intersection should be grouped together. It also does not address whether opposite-direction service should be counted separately or combined. **Our interpretation**: We cluster stops within 150 feet that serve the same street intersection, and when GTFS direction_id data is available, we analyze routes by direction to avoid double-counting bidirectional service. Alternative interpretations requiring exact stop_id matches would exclude many legitimate transit hubs where routes serve nearby stops at the same intersection.
 
