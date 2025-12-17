@@ -104,7 +104,7 @@ get_agency_metadata <- function() {
       id = "rmtd",
       name = "RMTD",
       full_name = "Rockford Mass Transit District",
-      url = "https://rmtd.org/rmtdgtfs/GTFS_FILES.zip",
+      url = "https://rmtd.org/wp-content/uploads/2025/10/GTFS_FILES.zip",
       color = "#FFD700",  # Gold
       has_rail = FALSE,
       rail_type = NULL,

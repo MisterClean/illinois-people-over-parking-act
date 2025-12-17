@@ -3,6 +3,10 @@
 # Complete workflow for identifying transit hubs (rail stations and bus hubs)
 # that qualify under the People Over Parking Act.
 #
+# UPDATED: Now uses representative weekday service selection to avoid
+# inflating trip counts when agencies define the same schedule multiple
+# times for different dates.
+#
 # High-Level Functions:
 #   - identify_all_hubs(): Complete hub identification workflow (rail + bus)
 #   - identify_rail_hubs(): Identify all rail transit stations
@@ -376,13 +380,14 @@ format_hub_diagnostics <- function(qualifying_clusters, bus_stops_clustered,
 #' Identify Bus Hubs
 #'
 #' Complete workflow for identifying qualifying bus hubs:
-#' 1. Identify weekday bus services and trips
-#' 2. Filter to AM/PM peak periods
-#' 3. Cluster bus stops spatially (150 ft radius)
-#' 4. Calculate frequency metrics
-#' 5. Apply qualification criteria (2+ routes, <=15 min frequency)
-#' 6. Verify route overlap at intersections
-#' 7. Format diagnostic information
+#' 1. Select representative weekday service for each agency
+#' 2. Filter to weekday bus trips using representative service
+#' 3. Filter to AM/PM peak periods
+#' 4. Cluster bus stops spatially (150 ft radius)
+#' 5. Calculate frequency metrics
+#' 6. Apply qualification criteria (2+ routes, <=15 min frequency)
+#' 7. Verify route overlap at intersections
+#' 8. Format diagnostic information
 #'
 #' @param all_stops Combined stops data.table
 #' @param all_routes Combined routes data.table
@@ -401,17 +406,26 @@ identify_bus_hubs <- function(all_stops, all_routes, all_trips,
                                all_stop_times, all_calendar, all_calendar_dates) {
   cat("\n=== Identifying Bus Hubs ===\n\n")
 
-  # Identify weekday services
-  weekday_service <- identify_weekday_services(all_calendar, all_calendar_dates)
-
-  # Get weekday bus trips
+  # Step 1: Get representative weekday services for each agency
+  cat("Selecting representative weekday services...\n")
+  
+  # Filter to bus routes first
   bus_routes <- all_routes[route_type == 3, .(unique_route_id, agency)]
-  weekday_bus_trips <- merge(all_trips, weekday_service, by = c("service_id", "agency"))
-  weekday_bus_trips <- weekday_bus_trips[unique_route_id %in% bus_routes$unique_route_id]
+  bus_trips <- all_trips[unique_route_id %in% bus_routes$unique_route_id]
+  
+  representative_services <- get_representative_services_by_agency(
+    all_calendar, all_calendar_dates, bus_trips
+  )
+  
+  cat("\nRepresentative services by agency:\n")
+  print(representative_services)
+  
+  # Step 2: Filter trips to representative weekday services
+  weekday_bus_trips <- filter_trips_to_representative_service(bus_trips, representative_services)
+  
+  cat(sprintf("\nWeekday bus trips (using representative services): %d\n", nrow(weekday_bus_trips)))
 
-  cat(sprintf("Found %d weekday bus trips\n", nrow(weekday_bus_trips)))
-
-  # Prepare peak period stop times
+  # Step 3: Prepare peak period stop times
   peak_stops <- prepare_peak_stop_times(all_stop_times, weekday_bus_trips)
   am_peak_bus_stops <- peak_stops$am_peak_bus_stops
   pm_peak_bus_stops <- peak_stops$pm_peak_bus_stops
@@ -419,12 +433,12 @@ identify_bus_hubs <- function(all_stops, all_routes, all_trips,
   cat(sprintf("AM peak stops: %d\n", nrow(am_peak_bus_stops)))
   cat(sprintf("PM peak stops: %d\n", nrow(pm_peak_bus_stops)))
 
-  # Get bus stops that need clustering
+  # Step 4: Get bus stops that need clustering
   bus_stops_for_clustering <- all_stops[
     unique_stop_id %in% c(am_peak_bus_stops$unique_stop_id, pm_peak_bus_stops$unique_stop_id)
   ]
 
-  # Apply spatial clustering (150 ft radius)
+  # Step 5: Apply spatial clustering (150 ft radius)
   cat("Clustering bus stops (150 ft radius)...\n")
   bus_stops_clustered <- cluster_stops_spatial(bus_stops_for_clustering, cluster_radius_ft = 150)
   cat(sprintf("Created %d clusters from %d bus stops\n",
@@ -439,13 +453,13 @@ identify_bus_hubs <- function(all_stops, all_routes, all_trips,
                              bus_stops_clustered[, .(unique_stop_id, cluster_id)],
                              by = "unique_stop_id")
 
-  # Calculate metrics and apply qualification
+  # Step 6: Calculate metrics and apply qualification
   hub_results <- calculate_bus_hub_metrics(am_peak_bus_stops, pm_peak_bus_stops,
                                            bus_stops_clustered)
   qualifying_clusters <- hub_results$qualifying_clusters
   has_direction <- hub_results$has_direction
 
-  # Format diagnostics
+  # Step 7: Format diagnostics
   qualifying_bus_hubs <- format_hub_diagnostics(
     qualifying_clusters, bus_stops_clustered,
     am_peak_bus_stops, pm_peak_bus_stops,

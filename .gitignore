@@ -3,7 +3,6 @@ data/
 *.zip
 
 # Generated outputs
-*.html
 !index.html
 !docs/*.html
 people_over_parking_map.html
