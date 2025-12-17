@@ -350,76 +350,116 @@ filter_peak_period_stop_times <- function(stop_times_dt, peak_start, peak_end) {
 # for different dates.
 # =============================================================================
 
-#' Get Representative Weekday Service ID
+#' Get Representative Weekday Service IDs
 #'
-#' Selects a single representative weekday service_id for frequency calculation.
+#' Selects representative weekday service_id(s) for frequency calculation.
 #' This avoids inflating trip counts when agencies define the same schedule
 #' multiple times for different dates in calendar_dates.txt.
+#'
+#' IMPORTANT: Some agencies (like PACE) organize services by division/garage,
+#' resulting in multiple distinct service_ids that together represent full
+#' weekday service. This function returns ALL such services to ensure complete
+#' route coverage.
 #'
 #' @param calendar_dt data.table with calendar.txt data
 #' @param calendar_dates_dt data.table with calendar_dates.txt data
 #' @param trips_dt data.table with trips to filter (e.g., agency-specific trips)
 #' @param target_date Date. Optional specific date to use. If NULL, finds next Tuesday.
 #'
-#' @return Character. Single service_id to use for frequency calculations
+#' @return Character vector of service_id(s) to use for frequency calculations.
+#'   Returns all weekday services when they represent different route groups,
+#'   or a single service when that covers all routes.
 #'
 #' @details
 #' The selection strategy is:
 #' \enumerate{
-#'   \item If calendar.txt has clear weekday services (Mon-Fri = 1), use the one
-#'         with most trips in the provided trips_dt
+#'   \item If calendar.txt has weekday services (Mon-Fri = 1):
+#'     \itemize{
+#'       \item If multiple weekday services cover different routes, return ALL of them
+#'       \item If they overlap significantly, return the one with most trips
+#'     }
 #'   \item Otherwise, use calendar_dates.txt to find services running on a
 #'         representative Tuesday (or target_date if provided)
-#'   \item If multiple services run on the same day, pick the one with most trips
 #'   \item Last resort: use the most common service_id in trips_dt
 #' }
 #'
-#' This approach ensures we count trips from a single typical weekday schedule,
-#' not a sum across multiple representations of the same schedule.
+#' This approach ensures we count trips from all route groups while avoiding
+#' double-counting when the same schedule is defined multiple times.
 #'
-#' @section Why Tuesday?
-#' Tuesday is chosen as the representative weekday because:
-#' \itemize{
-#'   \item Monday can have reduced service (holiday adjustments)
-#'   \item Friday can have modified schedules (early departures)
-#'   \item Tuesday/Wednesday/Thursday typically represent "normal" weekday service
-#' }
+#' @section Why Multiple Services?
+#' Agencies like PACE organize GTFS by division (West, Northwest, South, etc.).
+#' Each division has its own service_id, but they all represent weekday service.
+#' Selecting only one would miss routes from other divisions.
 #'
 #' @examples
 #' \dontrun{
-#' # Get representative service for SMTD
-#' smtd_trips <- all_trips[agency == "smtd"]
-#' rep_service <- get_representative_service(
-#'   all_calendar[agency == "smtd"],
-#'   all_calendar_dates[agency == "smtd"],
-#'   smtd_trips
+#' # Get representative services for PACE
+#' pace_trips <- all_trips[agency == "pace"]
+#' rep_services <- get_representative_service(
+#'   all_calendar[agency == "pace"],
+#'   all_calendar_dates[agency == "pace"],
+#'   pace_trips
 #' )
-#' 
-#' # Filter trips to only that service
-#' smtd_weekday_trips <- smtd_trips[service_id == rep_service]
+#'
+#' # Filter trips to weekday services (may be multiple)
+#' pace_weekday_trips <- pace_trips[service_id %in% rep_services]
 #' }
 #'
 #' @export
 get_representative_service <- function(calendar_dt, calendar_dates_dt, trips_dt,
                                         target_date = NULL) {
-  
-  # Method 1: Use calendar.txt if it has clear weekday service
+
+  # Method 1: Use calendar.txt if it has clear weekday services
   if (nrow(calendar_dt) > 0) {
     weekday_services <- calendar_dt[
       monday == 1 & tuesday == 1 & wednesday == 1 & thursday == 1 & friday == 1
     ]
-    
+
     if (nrow(weekday_services) > 0) {
-      # Check which is most used in our trips
-      trip_counts <- trips_dt[service_id %in% weekday_services$service_id, .N, by = service_id]
-      if (nrow(trip_counts) > 0) {
+      # Get all weekday services that have trips
+      services_with_trips <- trips_dt[service_id %in% weekday_services$service_id,
+                                      unique(service_id)]
+
+      if (length(services_with_trips) > 0) {
+        # Check if multiple services cover different routes (like PACE divisions)
+        if (length(services_with_trips) > 1) {
+          # Check route overlap between services
+          routes_by_service <- trips_dt[service_id %in% services_with_trips,
+                                        .(routes = list(unique(route_id))),
+                                        by = service_id]
+
+          # Calculate pairwise overlap
+          all_routes <- unique(unlist(routes_by_service$routes))
+
+          # Count how many services each route appears in
+          route_coverage <- trips_dt[service_id %in% services_with_trips,
+                                    .(n_services = uniqueN(service_id)),
+                                    by = route_id]
+
+          # If most routes appear in only 1 service, they're distinct divisions
+          # Use threshold: if >50% of routes are unique to one service
+          unique_routes <- sum(route_coverage$n_services == 1)
+          total_routes <- nrow(route_coverage)
+
+          if (unique_routes > total_routes * 0.5) {
+            # Services cover different routes - return ALL weekday services
+            cat(sprintf("  Found %d weekday services covering different route groups\n",
+                        length(services_with_trips)))
+            cat(sprintf("  Using ALL weekday services: %s\n",
+                        paste(services_with_trips, collapse = ", ")))
+            return(services_with_trips)
+          }
+        }
+
+        # Single service or overlapping services - return the one with most trips
+        trip_counts <- trips_dt[service_id %in% services_with_trips, .N, by = service_id]
         best_service <- trip_counts[which.max(N), service_id]
         cat(sprintf("  Using calendar.txt weekday service: %s\n", best_service))
         return(best_service)
       }
     }
   }
-  
+
   # Method 2: Use calendar_dates.txt - find a representative Tuesday
   if (nrow(calendar_dates_dt) > 0) {
     # Convert date column if needed
@@ -427,19 +467,19 @@ get_representative_service <- function(calendar_dt, calendar_dates_dt, trips_dt,
       calendar_dates_dt <- copy(calendar_dates_dt)
       calendar_dates_dt[, date_obj := as.Date(as.character(date), format = "%Y%m%d")]
     }
-    
+
     # Calculate weekday (1=Mon, 2=Tue, etc. using lubridate convention)
     if (!"weekday" %in% names(calendar_dates_dt)) {
       calendar_dates_dt[, weekday := lubridate::wday(date_obj, week_start = 1)]
     }
-    
+
     if (is.null(target_date)) {
       # Find the next upcoming Tuesday (or most recent if none upcoming)
       today <- Sys.Date()
-      
+
       # Find Tuesdays with service (exception_type=1 means service added)
       tuesdays <- calendar_dates_dt[exception_type == 1 & weekday == 2]
-      
+
       if (nrow(tuesdays) > 0) {
         # Prefer upcoming Tuesday, fall back to most recent
         upcoming_tuesdays <- tuesdays[date_obj >= today]
@@ -448,22 +488,15 @@ get_representative_service <- function(calendar_dt, calendar_dates_dt, trips_dt,
         } else {
           target_tuesday <- max(tuesdays$date_obj)
         }
-        
+
         service_on_tuesday <- tuesdays[date_obj == target_tuesday, service_id]
-        
+
         cat(sprintf("  Representative Tuesday: %s\n", target_tuesday))
         cat(sprintf("  Service(s) on that day: %s\n", paste(service_on_tuesday, collapse = ", ")))
-        
-        # If multiple services on same day, pick the one with most trips
-        if (length(service_on_tuesday) > 1) {
-          trip_counts <- trips_dt[service_id %in% service_on_tuesday, .N, by = service_id]
-          if (nrow(trip_counts) > 0) {
-            best_service <- trip_counts[which.max(N), service_id]
-            cat(sprintf("  Multiple services found, picking: %s (most trips)\n", best_service))
-            return(best_service)
-          }
-        } else if (length(service_on_tuesday) == 1) {
-          return(service_on_tuesday[1])
+
+        # Return all services on that Tuesday (they may cover different routes)
+        if (length(service_on_tuesday) >= 1) {
+          return(service_on_tuesday)
         }
       }
     } else {
@@ -472,18 +505,12 @@ get_representative_service <- function(calendar_dt, calendar_dates_dt, trips_dt,
         exception_type == 1 & date_obj == target_date,
         service_id
       ]
-      
+
       if (length(services_on_date) > 0) {
-        if (length(services_on_date) > 1) {
-          trip_counts <- trips_dt[service_id %in% services_on_date, .N, by = service_id]
-          if (nrow(trip_counts) > 0) {
-            return(trip_counts[which.max(N), service_id])
-          }
-        }
-        return(services_on_date[1])
+        return(services_on_date)
       }
     }
-    
+
     # Fallback: find service with most weekday dates
     weekday_services <- calendar_dates_dt[exception_type == 1 & weekday >= 1 & weekday <= 5]
     service_weekday_counts <- weekday_services[, .N, by = service_id]
@@ -493,7 +520,7 @@ get_representative_service <- function(calendar_dt, calendar_dates_dt, trips_dt,
       return(best_service)
     }
   }
-  
+
   # Last resort: use most common service in trips
   trip_counts <- trips_dt[, .N, by = service_id]
   if (nrow(trip_counts) > 0) {
@@ -501,7 +528,7 @@ get_representative_service <- function(calendar_dt, calendar_dates_dt, trips_dt,
     cat(sprintf("  Last resort: using most common service: %s\n", best_service))
     return(best_service)
   }
-  
+
   warning("Could not determine representative service - returning NULL")
   return(NULL)
 }
@@ -510,18 +537,18 @@ get_representative_service <- function(calendar_dt, calendar_dates_dt, trips_dt,
 #' Get Representative Services for All Agencies
 #'
 #' Applies representative service selection to each agency's data.
-#' Returns a lookup table mapping agency -> representative service_id.
+#' Returns a lookup table mapping agency -> representative service_id(s).
 #'
 #' @param all_calendar Combined calendar data.table
-#' @param all_calendar_dates Combined calendar_dates data.table  
+#' @param all_calendar_dates Combined calendar_dates data.table
 #' @param all_trips Combined trips data.table
 #'
-#' @return data.table with columns: agency, representative_service_id
+#' @return data.table with columns: agency, representative_service_ids (list column)
 #'
 #' @details
-#' For each agency, determines the single best service_id to use for
-#' frequency calculations. This ensures consistent methodology across
-#' agencies regardless of how they structure their GTFS calendar data.
+#' For each agency, determines the service_id(s) to use for frequency calculations.
+#' Some agencies (like PACE) have multiple weekday services for different route
+#' groups - this function returns all of them to ensure complete coverage.
 #'
 #' @examples
 #' \dontrun{
@@ -529,36 +556,37 @@ get_representative_service <- function(calendar_dt, calendar_dates_dt, trips_dt,
 #'   all_calendar, all_calendar_dates, all_trips
 #' )
 #' print(rep_services)
-#' #    agency representative_service_id
-#' # 1:    cta                   weekday
-#' # 2:   pace                  weekday1
-#' # 3:   smtd                  c74850_1
+#' #    agency representative_service_ids
+#' # 1:    cta                    weekday
+#' # 2:   pace  2025-08-WE-Weekday-01,...  (multiple)
+#' # 3:   smtd                   c74850_1
 #' }
 #'
 #' @export
 get_representative_services_by_agency <- function(all_calendar, all_calendar_dates, all_trips) {
-  
+
   agencies <- unique(all_trips$agency)
-  
+
   result <- rbindlist(lapply(agencies, function(agency_id) {
     cat(sprintf("\nDetermining representative service for %s:\n", toupper(agency_id)))
-    
+
     agency_calendar <- all_calendar[agency == agency_id]
     agency_calendar_dates <- all_calendar_dates[agency == agency_id]
     agency_trips <- all_trips[agency == agency_id]
-    
-    rep_service <- get_representative_service(
+
+    rep_services <- get_representative_service(
       agency_calendar,
       agency_calendar_dates,
       agency_trips
     )
-    
+
+    # Store as list to handle multiple service_ids
     data.table(
       agency = agency_id,
-      representative_service_id = rep_service
+      representative_service_ids = list(rep_services)
     )
   }))
-  
+
   return(result)
 }
 
@@ -566,18 +594,19 @@ get_representative_services_by_agency <- function(all_calendar, all_calendar_dat
 #' Filter Trips to Representative Weekday Service
 #'
 #' Filters trips to only include those running on the representative
-#' weekday service for each agency.
+#' weekday service(s) for each agency.
 #'
 #' @param all_trips Combined trips data.table
 #' @param representative_services data.table from get_representative_services_by_agency()
+#'   with columns: agency, representative_service_ids (list column)
 #'
 #' @return data.table with trips filtered to representative services
 #'
 #' @details
 #' This is the key function that applies the representative service
-#' selection to filter trips before frequency calculation. Using a
-#' single representative service per agency ensures accurate trip
-#' counts that reflect actual weekday service levels.
+#' selection to filter trips before frequency calculation. Some agencies
+#' (like PACE) have multiple weekday services covering different route
+#' groups - this function includes trips from ALL representative services.
 #'
 #' @examples
 #' \dontrun{
@@ -589,20 +618,16 @@ get_representative_services_by_agency <- function(all_calendar, all_calendar_dat
 #'
 #' @export
 filter_trips_to_representative_service <- function(all_trips, representative_services) {
-  
-  # Merge to add representative_service_id to trips
-  trips_with_rep <- merge(
-    all_trips,
-    representative_services,
-    by = "agency",
-    all.x = TRUE
-  )
-  
-  # Filter to only trips on representative service
-  filtered_trips <- trips_with_rep[service_id == representative_service_id]
-  
-  # Remove the helper column
-  filtered_trips[, representative_service_id := NULL]
+
+  # Build a lookup of all valid (agency, service_id) combinations
+  valid_services <- representative_services[, .(
+    service_id = unlist(representative_service_ids)
+  ), by = agency]
+
+  # Filter trips to only those matching valid agency/service combinations
+  filtered_trips <- all_trips[
+    paste(agency, service_id) %in% paste(valid_services$agency, valid_services$service_id)
+  ]
   
   cat(sprintf("\nFiltered to representative services: %d / %d trips (%.1f%%)\n",
               nrow(filtered_trips), nrow(all_trips),

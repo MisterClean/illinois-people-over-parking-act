@@ -221,11 +221,17 @@ cat(sprintf("Hubs after filtering to Illinois boundary: %d\n", nrow(all_hubs_sf)
 ```{r process_corridors_and_buffers, results='hide'}
 ## Identify Corridors and Create Buffers
 
-# Identify qualifying transit corridors (edge-based method with agency-specific processing)
-# PACE and CTA are processed together (can overlap), other agencies separately
+# Identify qualifying transit corridors using edge-based method
+# This method automatically handles:
+# 1. Single routes with ≤15 min frequency (their edges qualify)
+# 2. Multiple routes combining to ≤15 min frequency (shared edge qualifies)
+# by counting all trips on each corridor edge regardless of route
 corridor_results <- identify_qualifying_corridors(
-  all_stops, am_peak_bus_stops, pm_peak_bus_stops,
-  all_trips, all_shapes
+  all_stops,
+  hub_results$am_peak_bus_stops,
+  hub_results$pm_peak_bus_stops,
+  all_trips,
+  all_shapes
 )
 
 qualifying_corridor_segments_sf <- corridor_results$qualifying_corridor_segments
@@ -307,12 +313,20 @@ kable(summary_data, caption = "Transit Hub and Corridor Summary") %>%
 ```{r create_map}
 ## Create Interactive Map
 
-# Create the interactive map using the map creation module
+# Convert shapes to linestrings for map display
+cat("Converting GTFS shapes to linestrings for visualization...\n")
+all_shapes_sf <- convert_shapes_to_linestrings(all_shapes)
+
+# Create the interactive map with all layers
+# Now includes corridor segments, all routes, and bus stops for detailed visualization
 final_map <- create_interactive_map(
   all_hubs_sf = all_hubs_sf,
   all_affected_areas = all_affected_areas_combined,
   hub_buffers = hub_buffers,
   all_corridors_union = all_corridors_union_wgs84,
+  qualifying_corridor_segments_sf = qualifying_corridor_segments_sf,
+  all_shapes_sf = all_shapes_sf,
+  all_stops = all_stops,
   illinois_boundary = illinois_boundary
 )
 

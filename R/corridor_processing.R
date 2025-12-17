@@ -866,3 +866,453 @@ create_corridor_buffers <- function(qualifying_corridor_segments_sf, illinois_bo
 
   return(all_corridors_union_wgs84)
 }
+
+
+# =============================================================================
+# Combined Corridor Identification (Route-Level + Spatial Overlap)
+# =============================================================================
+# This approach combines two methods to ensure comprehensive corridor coverage:
+# 1. Route-level method: Any route with ≤15 min frequency qualifies individually
+# 2. Spatial overlap method: Areas where 2+ routes overlap with combined ≤15 min frequency
+# =============================================================================
+
+#' Calculate Route-Level Corridor Frequency
+#'
+#' Calculates AM/PM peak frequency at the route level (not edge level).
+#' A route qualifies if it has ≤15 minute frequency in either AM or PM peak.
+#'
+#' @param weekday_trips data.table of weekday bus trips (filtered to representative service)
+#' @param am_stop_times data.table of AM peak stop times
+#' @param pm_stop_times data.table of PM peak stop times
+#' @param max_interval_minutes Maximum interval to qualify (default: 15)
+#'
+#' @return data.table with route-level frequency metrics including:
+#'   unique_route_id, direction_id, agency, trips_am, trips_pm,
+#'   interval_am, interval_pm, qualifies, best_interval, shapes (list of shape_ids)
+#'
+#' @export
+calculate_route_level_frequency <- function(weekday_trips, am_stop_times, pm_stop_times,
+                                            max_interval_minutes = 15) {
+
+  # Get direction_id info from trips
+  trip_info <- weekday_trips[, .(unique_trip_id, unique_route_id, direction_id, unique_shape_id, agency)]
+
+  # Add route info to stop times
+  am_with_routes <- merge(am_stop_times[, .(unique_trip_id, unique_stop_id)],
+                          trip_info, by = "unique_trip_id")
+  pm_with_routes <- merge(pm_stop_times[, .(unique_trip_id, unique_stop_id)],
+                          trip_info, by = "unique_trip_id")
+
+  # Calculate AM trips per route/direction
+  am_route_freq <- am_with_routes[, .(
+    trips_am = uniqueN(unique_trip_id)
+  ), by = .(unique_route_id, direction_id, agency)]
+  am_route_freq[, interval_am := 120 / trips_am]
+
+  # Calculate PM trips per route/direction
+  pm_route_freq <- pm_with_routes[, .(
+    trips_pm = uniqueN(unique_trip_id)
+  ), by = .(unique_route_id, direction_id, agency)]
+  pm_route_freq[, interval_pm := 120 / trips_pm]
+
+  # Combine AM and PM
+  route_freq <- merge(am_route_freq, pm_route_freq,
+                      by = c("unique_route_id", "direction_id", "agency"), all = TRUE)
+
+  # Fill NAs
+  route_freq[is.na(trips_am), trips_am := 0]
+  route_freq[is.na(trips_pm), trips_pm := 0]
+  route_freq[is.na(interval_am), interval_am := Inf]
+  route_freq[is.na(interval_pm), interval_pm := Inf]
+
+  # Qualification: ≤15 min in EITHER AM or PM
+  route_freq[, qualifies := interval_am <= max_interval_minutes | interval_pm <= max_interval_minutes]
+  route_freq[, best_interval := pmin(interval_am, interval_pm)]
+
+  # Get shapes for each route/direction
+  route_shapes <- weekday_trips[, .(
+    shapes = list(unique(unique_shape_id[!is.na(unique_shape_id)]))
+  ), by = .(unique_route_id, direction_id, agency)]
+
+  route_freq <- merge(route_freq, route_shapes,
+                      by = c("unique_route_id", "direction_id", "agency"), all.x = TRUE)
+
+  return(route_freq)
+}
+
+
+#' Identify Overlapping Corridors with Combined Frequency
+#'
+#' Finds areas where 2+ routes overlap spatially and combines their frequencies.
+#' Qualifies areas where combined frequency ≤15 min even if individual routes don't qualify.
+#'
+#' @param shapes_sf sf object with route shape linestrings (from convert_shapes_to_linestrings)
+#' @param route_freq data.table with route frequency metrics (from calculate_route_level_frequency)
+#' @param max_interval_minutes Maximum interval to qualify (default: 15)
+#' @param detection_buffer_ft Buffer distance for detecting overlaps (default: 50ft)
+#'
+#' @return List with:
+#'   \itemize{
+#'     \item overlap_linestrings_sf: sf object with qualifying overlap segments (LINESTRING)
+#'     \item overlap_stats: data.table with overlap statistics
+#'   }
+#'
+#' @export
+identify_overlapping_corridors <- function(shapes_sf, route_freq,
+                                           max_interval_minutes = 15,
+                                           detection_buffer_ft = 50) {
+
+  cat("\n--- Identifying Overlapping Corridors ---\n")
+
+  if (nrow(shapes_sf) == 0 || nrow(route_freq) == 0) {
+    cat("No shapes or route frequency data available\n")
+    return(list(
+      overlap_linestrings_sf = st_sf(geometry = st_sfc(crs = 4326)),
+      overlap_stats = data.table()
+    ))
+  }
+
+  # Add frequency data to shapes
+  shape_freq <- route_freq[, .(
+    unique_route_id, direction_id, agency,
+    trips_am, trips_pm,
+    interval_am, interval_pm,
+    shapes_list = shapes
+  )]
+
+  # Unnest shapes list to get shape-level frequency
+  shape_freq_unnested <- shape_freq[, .(
+    unique_shape_id = unlist(shapes_list)
+  ), by = .(unique_route_id, direction_id, agency, trips_am, trips_pm, interval_am, interval_pm)]
+
+  # Merge with shapes geometry
+  shapes_with_freq <- merge(
+    as.data.frame(shapes_sf),
+    shape_freq_unnested,
+    by = "unique_shape_id",
+    all = FALSE
+  )
+
+  if (nrow(shapes_with_freq) == 0) {
+    cat("No shapes with frequency data\n")
+    return(list(
+      overlap_linestrings_sf = st_sf(geometry = st_sfc(crs = 4326)),
+      overlap_stats = data.table()
+    ))
+  }
+
+  # Reconstruct as sf
+  shapes_with_freq_sf <- st_sf(shapes_with_freq, crs = st_crs(shapes_sf))
+
+  # Remove shapes with no weekday service
+  shapes_with_freq_sf <- shapes_with_freq_sf[
+    !is.na(shapes_with_freq_sf$trips_am) | !is.na(shapes_with_freq_sf$trips_pm),
+  ]
+  shapes_with_freq_sf$trips_am[is.na(shapes_with_freq_sf$trips_am)] <- 0
+  shapes_with_freq_sf$trips_pm[is.na(shapes_with_freq_sf$trips_pm)] <- 0
+
+  cat(sprintf("Shapes with frequency data: %d\n", nrow(shapes_with_freq_sf)))
+
+  # Project to IL State Plane for accurate buffering
+  shapes_projected <- st_transform(shapes_with_freq_sf, 3435)
+
+  # Buffer for overlap detection
+  cat(sprintf("Buffering shapes by %d ft for overlap detection...\n", detection_buffer_ft))
+  shapes_buffered <- st_buffer(shapes_projected, detection_buffer_ft)
+
+  # Find spatial overlaps
+  cat("Detecting spatial overlaps...\n")
+  overlaps <- st_intersects(shapes_buffered)
+
+  # Build overlap records
+  overlap_records <- list()
+
+  for (i in seq_along(overlaps)) {
+    overlapping_indices <- overlaps[[i]]
+
+    # Skip if only self-overlap
+    if (length(overlapping_indices) <= 1) next
+
+    # Get all overlapping shapes (including self)
+    overlap_group <- shapes_buffered[overlapping_indices, ]
+
+    # Process by direction
+    for (dir in unique(overlap_group$direction_id)) {
+      dir_shapes <- overlap_group[overlap_group$direction_id == dir, ]
+
+      # Need at least 2 routes to have meaningful overlap
+      if (nrow(dir_shapes) < 2) next
+
+      # Calculate combined frequency
+      combined_trips_am <- sum(dir_shapes$trips_am, na.rm = TRUE)
+      combined_trips_pm <- sum(dir_shapes$trips_pm, na.rm = TRUE)
+
+      combined_interval_am <- ifelse(combined_trips_am > 0, 120 / combined_trips_am, Inf)
+      combined_interval_pm <- ifelse(combined_trips_pm > 0, 120 / combined_trips_pm, Inf)
+      combined_interval <- min(combined_interval_am, combined_interval_pm)
+
+      # Check if combined frequency qualifies
+      if (combined_interval <= max_interval_minutes) {
+        # Get the original shape (not buffered) for the center shape
+        original_shape_idx <- i
+        original_shape <- shapes_projected[original_shape_idx, ]
+
+        if (nrow(original_shape) > 0) {
+          overlap_records[[length(overlap_records) + 1]] <- list(
+            center_shape_id = shapes_projected$unique_shape_id[i],
+            direction_id = dir,
+            n_overlapping_routes = nrow(dir_shapes),
+            combined_trips_am = combined_trips_am,
+            combined_trips_pm = combined_trips_pm,
+            combined_interval_am = combined_interval_am,
+            combined_interval_pm = combined_interval_pm,
+            combined_interval = combined_interval,
+            geometry = st_geometry(original_shape)[[1]]
+          )
+        }
+      }
+    }
+  }
+
+  cat(sprintf("Found %d qualifying overlap segments\n", length(overlap_records)))
+
+  if (length(overlap_records) == 0) {
+    return(list(
+      overlap_linestrings_sf = st_sf(geometry = st_sfc(crs = st_crs(shapes_projected))),
+      overlap_stats = data.table()
+    ))
+  }
+
+  # Convert to sf
+  overlap_dt <- rbindlist(lapply(overlap_records, function(x) {
+    data.table(
+      center_shape_id = x$center_shape_id,
+      direction_id = x$direction_id,
+      n_overlapping_routes = x$n_overlapping_routes,
+      combined_trips_am = x$combined_trips_am,
+      combined_trips_pm = x$combined_trips_pm,
+      combined_interval_am = round(x$combined_interval_am, 1),
+      combined_interval_pm = round(x$combined_interval_pm, 1),
+      combined_interval = round(x$combined_interval, 1)
+    )
+  }))
+
+  overlap_geoms <- lapply(overlap_records, function(x) x$geometry)
+  overlap_sfc <- st_sfc(overlap_geoms, crs = st_crs(shapes_projected))
+  overlap_sf <- st_sf(overlap_dt, geometry = overlap_sfc)
+
+  # Transform back to WGS84
+  overlap_sf_wgs84 <- st_transform(overlap_sf, 4326)
+
+  cat("Overlap detection complete\n")
+
+  return(list(
+    overlap_linestrings_sf = overlap_sf_wgs84,
+    overlap_stats = overlap_dt
+  ))
+}
+
+
+#' Identify Qualifying Corridors - Combined Method
+#'
+#' Identifies transit corridors using a combined approach:
+#' 1. Route-level: Any route with ≤15 min frequency qualifies individually
+#' 2. Spatial overlap: Areas where 2+ routes overlap with combined ≤15 min frequency
+#'
+#' @param all_stops Combined stops data.table
+#' @param all_routes Combined routes data.table
+#' @param all_trips Combined trips data.table
+#' @param all_stop_times Combined stop_times data.table
+#' @param all_shapes Combined shapes data.table
+#' @param all_calendar Calendar data.table
+#' @param all_calendar_dates Calendar dates data.table
+#' @param max_interval_minutes Maximum interval to qualify (default: 15)
+#'
+#' @return List with:
+#'   \itemize{
+#'     \item qualifying_corridor_segments: sf object with all qualifying route linestrings
+#'     \item qualification_summary: data.table with combined statistics
+#'     \item single_route_count: Number of individually qualifying routes
+#'     \item overlap_area_count: Number of overlap areas that qualify
+#'   }
+#'
+#' @export
+identify_corridors_combined_method <- function(all_stops, all_routes, all_trips,
+                                               all_stop_times, all_shapes,
+                                               all_calendar, all_calendar_dates,
+                                               max_interval_minutes = 15) {
+
+  cat("\n=== Identifying Transit Corridors (Combined Route-Level + Spatial Overlap) ===\n\n")
+
+  # Step 1: Filter to bus routes
+  bus_routes <- all_routes[route_type == 3]
+  bus_trips <- all_trips[unique_route_id %in% bus_routes$unique_route_id]
+
+  cat(sprintf("Bus routes: %d\n", nrow(bus_routes)))
+  cat(sprintf("Bus trips (all services): %d\n", nrow(bus_trips)))
+
+  # Step 2: Get representative weekday services
+  cat("\nSelecting representative weekday services...\n")
+  rep_services <- get_representative_services_by_agency(
+    all_calendar, all_calendar_dates, bus_trips
+  )
+
+  # Step 3: Filter to representative service
+  weekday_trips <- filter_trips_to_representative_service(bus_trips, rep_services)
+  cat(sprintf("Weekday bus trips (representative): %d\n", nrow(weekday_trips)))
+
+  # Step 4: Filter stop_times to weekday trips and parse times
+  weekday_stop_times <- all_stop_times[unique_trip_id %in% weekday_trips$unique_trip_id]
+
+  # Parse arrival times
+  weekday_stop_times[, arrival_time_hhmmss := substr(arrival_time, 1, 8)]
+  weekday_stop_times[, arrival_hour := as.integer(substr(arrival_time, 1, 2))]
+  weekday_stop_times <- weekday_stop_times[arrival_hour < 24]
+  weekday_stop_times[, arrival_time_obj := as.ITime(arrival_time_hhmmss, format = "%H:%M:%S")]
+
+  # Step 5: Filter to peak periods
+  am_start <- as.ITime("07:00:00")
+  am_end <- as.ITime("09:00:00")
+  pm_start <- as.ITime("16:00:00")
+  pm_end <- as.ITime("18:00:00")
+
+  am_stop_times <- weekday_stop_times[arrival_time_obj >= am_start & arrival_time_obj <= am_end]
+  pm_stop_times <- weekday_stop_times[arrival_time_obj >= pm_start & arrival_time_obj <= pm_end]
+
+  cat(sprintf("\nAM peak stop events: %d\n", nrow(am_stop_times)))
+  cat(sprintf("PM peak stop events: %d\n", nrow(pm_stop_times)))
+
+  # Step 6: Calculate route-level frequency
+  cat("\n--- Calculating Route-Level Frequency ---\n")
+  route_freq <- calculate_route_level_frequency(
+    weekday_trips, am_stop_times, pm_stop_times, max_interval_minutes
+  )
+
+  # Add route names for diagnostics
+  route_freq <- merge(route_freq,
+                      all_routes[, .(unique_route_id, route_short_name, route_long_name)],
+                      by = "unique_route_id", all.x = TRUE)
+
+  # Step 7: Get qualifying routes (individually)
+  qualifying_routes <- route_freq[qualifies == TRUE]
+  qualifying_shape_ids <- unique(unlist(qualifying_routes$shapes))
+  qualifying_shape_ids <- qualifying_shape_ids[!is.na(qualifying_shape_ids)]
+
+  cat(sprintf("\nRoutes qualifying individually: %d route-directions\n", nrow(qualifying_routes)))
+  cat(sprintf("Unique routes: %d\n", uniqueN(qualifying_routes$unique_route_id)))
+  cat(sprintf("Qualifying shapes: %d\n", length(qualifying_shape_ids)))
+
+  # Step 8: Convert shapes to linestrings
+  cat("\nConverting shapes to linestrings...\n")
+  shapes_sf <- convert_shapes_to_linestrings(all_shapes)
+
+  # Step 9: Get linestrings for individually qualifying routes
+  single_route_linestrings <- st_sf(geometry = st_sfc(crs = 4326))
+  if (length(qualifying_shape_ids) > 0 && nrow(shapes_sf) > 0) {
+    single_route_linestrings <- shapes_sf[shapes_sf$unique_shape_id %in% qualifying_shape_ids, ]
+    cat(sprintf("Single-route qualifying linestrings: %d\n", nrow(single_route_linestrings)))
+  }
+
+  # Step 10: Identify overlapping corridors
+  cat("\n--- Identifying Spatial Overlaps ---\n")
+  overlap_result <- identify_overlapping_corridors(
+    shapes_sf, route_freq, max_interval_minutes, detection_buffer_ft = 50
+  )
+
+  overlap_linestrings <- overlap_result$overlap_linestrings_sf
+  overlap_stats <- overlap_result$overlap_stats
+
+  cat(sprintf("Overlap-qualifying linestrings: %d\n", nrow(overlap_linestrings)))
+
+  # Step 11: Combine both sets of linestrings
+  cat("\n--- Combining Results ---\n")
+
+  all_qualifying_linestrings <- list()
+
+  if (nrow(single_route_linestrings) > 0) {
+    # Standardize column structure for single-route linestrings
+    # Rename unique_shape_id to shape_id for consistency
+    single_route_linestrings$shape_id <- single_route_linestrings$unique_shape_id
+    single_route_linestrings$unique_shape_id <- NULL
+
+    # Add corridor type
+    single_route_linestrings$corridor_type <- "single_route"
+
+    # Add overlap-specific columns with NA
+    single_route_linestrings$direction_id <- NA_character_
+    single_route_linestrings$n_overlapping_routes <- NA_integer_
+    single_route_linestrings$combined_trips_am <- NA_integer_
+    single_route_linestrings$combined_trips_pm <- NA_integer_
+    single_route_linestrings$combined_interval_am <- NA_real_
+    single_route_linestrings$combined_interval_pm <- NA_real_
+    single_route_linestrings$combined_interval <- NA_real_
+
+    all_qualifying_linestrings[[1]] <- single_route_linestrings
+  }
+
+  if (nrow(overlap_linestrings) > 0) {
+    # Standardize column structure for overlap linestrings
+    # Rename center_shape_id to shape_id for consistency
+    overlap_linestrings$shape_id <- overlap_linestrings$center_shape_id
+    overlap_linestrings$center_shape_id <- NULL
+
+    # Add corridor type
+    overlap_linestrings$corridor_type <- "overlap"
+
+    # Add single-route specific columns with NA
+    overlap_linestrings$agency <- NA_character_
+    overlap_linestrings$num_points <- NA_integer_
+
+    all_qualifying_linestrings[[2]] <- overlap_linestrings
+  }
+
+  if (length(all_qualifying_linestrings) > 0) {
+    # Define consistent column order (geometry stays at end automatically in sf objects)
+    col_order <- c("shape_id", "agency", "corridor_type", "direction_id",
+                   "num_points", "n_overlapping_routes",
+                   "combined_trips_am", "combined_trips_pm",
+                   "combined_interval_am", "combined_interval_pm",
+                   "combined_interval")
+
+    # Reorder columns in each sf object for consistency
+    all_qualifying_linestrings <- lapply(all_qualifying_linestrings, function(sf_obj) {
+      # Get all columns except geometry
+      non_geom_cols <- setdiff(names(sf_obj), "geometry")
+      # Order them according to col_order (keeping only existing ones)
+      ordered_cols <- col_order[col_order %in% non_geom_cols]
+      # Add any extra columns not in col_order
+      extra_cols <- setdiff(non_geom_cols, col_order)
+      final_order <- c(ordered_cols, extra_cols, "geometry")
+      sf_obj[, final_order]
+    })
+
+    qualifying_corridor_segments_sf <- do.call(rbind, all_qualifying_linestrings)
+    cat(sprintf("Total qualifying corridor segments: %d\n", nrow(qualifying_corridor_segments_sf)))
+  } else {
+    qualifying_corridor_segments_sf <- st_sf(geometry = st_sfc(crs = 4326))
+    cat("No qualifying corridor segments found\n")
+  }
+
+  # Step 12: Create combined qualification summary
+  qualification_summary <- data.table(
+    method = c(rep("route_level", nrow(qualifying_routes)),
+               rep("spatial_overlap", nrow(overlap_stats))),
+    details = c(
+      paste(qualifying_routes$route_short_name, qualifying_routes$direction_id),
+      paste("Overlap", overlap_stats$center_shape_id)
+    )
+  )
+
+  # Print summary
+  cat("\n=== Corridor Qualification Summary ===\n")
+  cat(sprintf("  Single routes qualifying: %d\n", nrow(qualifying_routes)))
+  cat(sprintf("  Overlap areas qualifying: %d\n", nrow(overlap_stats)))
+  cat(sprintf("  Total corridor segments: %d\n", nrow(qualifying_corridor_segments_sf)))
+
+  return(list(
+    qualifying_corridor_segments = qualifying_corridor_segments_sf,
+    qualification_summary = qualification_summary,
+    single_route_count = nrow(qualifying_routes),
+    overlap_area_count = nrow(overlap_stats)
+  ))
+}

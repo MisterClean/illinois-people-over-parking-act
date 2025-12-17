@@ -7,10 +7,10 @@
 #   - create_interactive_map(): Creates complete Leaflet map with all layers
 #
 # Helper Functions:
-#   - get_agency_color_palette(): Returns color palette for agencies
-#   - create_hub_popup_html(): Creates popup HTML for hub markers
+#   - get_agency_color_palette(): Returns color palette for agencies (deprecated, kept for compatibility)
+#   - create_hub_popup_html(): Creates popup HTML for hub markers (deprecated, kept for compatibility)
 
-#' Get Agency Color Palette
+#' Get Agency Color Palette (Deprecated)
 #'
 #' Returns the standardized color palette for transit agencies.
 #' Now pulls colors from centralized agency metadata.
@@ -23,7 +23,7 @@ get_agency_color_palette <- function() {
   return(colors)
 }
 
-#' Create Hub Popup HTML
+#' Create Hub Popup HTML (Deprecated)
 #'
 #' Creates formatted HTML popup content for transit hub markers.
 #' Includes different information for rail vs bus hubs.
@@ -70,27 +70,45 @@ create_hub_popup_html <- function(hub_sf) {
 #' Create Interactive Map
 #'
 #' Creates a Leaflet map showing transit hubs, corridors, and affected areas.
-#' Dynamically handles all agencies via metadata. Includes layer controls and
-#' Illinois state boundary outline.
+#' Uses a colorblind-safe creative palette with detailed transit layers.
 #'
 #' @param all_hubs_sf sf object with all transit hubs
-#' @param all_affected_areas sf object with combined affected areas
-#' @param hub_buffers List from create_hub_buffers() with per_agency_union field
+#' @param all_affected_areas sf object with combined affected areas (hubs + corridors)
+#' @param hub_buffers List from create_hub_buffers() with all_hub_areas field
 #' @param all_corridors_union sf object with corridor buffers
+#' @param qualifying_corridor_segments_sf sf object with individual qualifying corridor segments
+#' @param all_shapes_sf sf object with all bus route shapes (LINESTRING geometries)
+#' @param all_stops sf object or data.table with all bus stops
 #' @param illinois_boundary sf object with Illinois state boundary (for outline)
 #' @param center_lng Longitude for map center (default: Chicago -87.6079)
 #' @param center_lat Latitude for map center (default: Chicago 41.8917)
 #' @param zoom Initial zoom level (default: 9)
 #' @return Leaflet map object
 #'
+#' @details
+#' Map layers (colorblind-safe palette):
+#' \itemize{
+#'   \item Combined Parking Relief (purple #9370DB) - hubs + corridors, default visible
+#'   \item Hub Buffers (teal #20B2AA) - 1/2 mile buffers, hidden by default
+#'   \item Corridor Buffers (coral #FF6B6B) - 1/8 mile buffers, hidden by default
+#'   \item Corridor Segments (crimson #DC143C) - qualifying edges with popups, hidden by default
+#'   \item Hub Points (indigo #4B0082) - transit hubs with popups, default visible
+#'   \item All Bus Routes (gray #808080) - reference shapes, hidden by default
+#'   \item Bus Stops (steel blue #4682B4) - all stops, hidden by default
+#' }
+#'
 #' @examples
 #' \dontrun{
+#' all_shapes_sf <- convert_shapes_to_linestrings(all_shapes)
 #' hub_buffers <- create_hub_buffers(all_hubs_sf, illinois_boundary)
 #' map <- create_interactive_map(
 #'   all_hubs_sf,
 #'   all_affected_areas_combined,
 #'   hub_buffers,
 #'   all_corridors_union_wgs84,
+#'   qualifying_corridor_segments_sf,
+#'   all_shapes_sf,
+#'   all_stops,
 #'   illinois_boundary
 #' )
 #' }
@@ -98,86 +116,107 @@ create_interactive_map <- function(all_hubs_sf,
                                    all_affected_areas,
                                    hub_buffers,
                                    all_corridors_union,
+                                   qualifying_corridor_segments_sf,
+                                   all_shapes_sf,
+                                   all_stops,
                                    illinois_boundary,
                                    center_lng = -87.6079,
                                    center_lat = 41.8917,
                                    zoom = 9) {
   cat("\n=== Creating Interactive Map ===\n\n")
 
-  # Define color palette for agencies
-  agency_colors <- get_agency_color_palette()
-  agency_pal <- colorFactor(
-    palette = agency_colors,
-    domain = all_hubs_sf$agency_name
-  )
-
-  # Create base map
-  map <- leaflet() %>%
-    setView(lng = center_lng, lat = center_lat, zoom = zoom) %>%
-    addProviderTiles(providers$CartoDB.Positron) %>%
-
-    # Combined affected areas (default visible)
-    addPolygons(
-      data = all_affected_areas,
-      fillColor = "purple",
-      fillOpacity = 0.25,
-      weight = 1,
-      color = "purple",
-      opacity = 0.7,
-      group = "All Affected Areas (Hubs + Corridors)"
-    )
-
-  # Dynamically add hub buffer layers for each agency
-  cat("Adding agency hub buffer layers...\n")
-  per_agency_union <- hub_buffers$per_agency_union
-
-  agency_hub_groups <- c()  # Track group names for layer control
-
-  for (agency_id in names(per_agency_union)) {
-    agency_buffer <- per_agency_union[[agency_id]]
-    agency_name <- get_agency_display_name(agency_id)
-    agency_color <- get_agency_color(agency_id)
-    group_name <- paste0(agency_name, " Hubs (1/2 mile)")
-
-    # Only add layer if buffer has data
-    if (length(agency_buffer) > 0 && !is.null(agency_buffer)) {
-      map <- map %>%
-        addPolygons(
-          data = agency_buffer,
-          fillColor = agency_color,
-          fillOpacity = 0.4,
-          weight = 1,
-          color = agency_color,
-          opacity = 0.8,
-          group = group_name
-        )
-
-      agency_hub_groups <- c(agency_hub_groups, group_name)
-    }
+  # Convert stops to sf if needed
+  if (!inherits(all_stops, "sf")) {
+    cat("Converting stops to sf object...\n")
+    all_stops <- st_as_sf(all_stops, coords = c("stop_lon", "stop_lat"), crs = 4326)
   }
 
-  # Add corridor and hub points layers
+  # Colorblind-safe creative palette
+  COLOR_PARKING_RELIEF <- "#9370DB"  # Purple - combined parking relief
+  COLOR_HUB_BUFFER <- "#20B2AA"      # Teal - hub buffers
+  COLOR_CORRIDOR_BUFFER <- "#FF6B6B" # Coral - corridor buffers
+  COLOR_CORRIDOR_SEGMENTS <- "#DC143C" # Crimson - corridor segments
+  COLOR_HUB_POINTS <- "#4B0082"      # Indigo - hub points
+  COLOR_ALL_ROUTES <- "#808080"      # Gray - all routes
+  COLOR_BUS_STOPS <- "#4682B4"       # Steel blue - bus stops
+
+  # Create base map
+  cat("Building base map layers...\n")
+  map <- leaflet() %>%
+    setView(lng = center_lng, lat = center_lat, zoom = zoom) %>%
+    addProviderTiles(providers$CartoDB.Positron)
+
+  # Layer 1: Combined Parking Relief (hubs + corridors) - DEFAULT VISIBLE, Purple
+  cat("Adding Combined Parking Relief layer...\n")
   map <- map %>%
-    # Corridor areas (combined)
     addPolygons(
-      data = all_corridors_union,
-      fillColor = "#FF8C00", # Orange for corridors
+      data = all_affected_areas,
+      fillColor = COLOR_PARKING_RELIEF,
+      fillOpacity = 0.25,
+      weight = 1,
+      color = COLOR_PARKING_RELIEF,
+      opacity = 0.7,
+      group = "Combined Parking Relief (Hubs + Corridors)"
+    )
+
+  # Layer 2: Combined Hub Buffers - HIDDEN, Teal
+  cat("Adding Hub Buffers layer...\n")
+  map <- map %>%
+    addPolygons(
+      data = hub_buffers$all_hub_areas,
+      fillColor = COLOR_HUB_BUFFER,
       fillOpacity = 0.3,
       weight = 1,
-      color = "#FF8C00",
-      opacity = 0.6,
-      group = "All Corridors (1/8 mile)",
-      dashArray = "5,5"
-    ) %>%
+      color = COLOR_HUB_BUFFER,
+      opacity = 0.8,
+      group = "Hub Buffers (1/2 mile)"
+    )
 
-    # Hub points with popups
+  # Layer 3: Corridor Buffers - HIDDEN, Coral
+  cat("Adding Corridor Buffers layer...\n")
+  map <- map %>%
+    addPolygons(
+      data = all_corridors_union,
+      fillColor = COLOR_CORRIDOR_BUFFER,
+      fillOpacity = 0.3,
+      weight = 1,
+      color = COLOR_CORRIDOR_BUFFER,
+      opacity = 0.8,
+      group = "Corridor Buffers (1/8 mile)"
+    )
+
+  # Layer 4: Corridor Segments (individual qualifying edges) - HIDDEN, Crimson
+  cat("Adding Corridor Segments layer...\n")
+  if (!is.null(qualifying_corridor_segments_sf) && nrow(qualifying_corridor_segments_sf) > 0) {
+    map <- map %>%
+      addPolylines(
+        data = qualifying_corridor_segments_sf,
+        color = COLOR_CORRIDOR_SEGMENTS,
+        weight = 3,
+        opacity = 0.9,
+        group = "Corridor Segments (Qualifying)",
+        popup = ~paste0(
+          "<strong>Qualifying Corridor Segment</strong><br>",
+          "Edge: ", from_cluster, " → ", to_cluster, "<br>",
+          "Routes: ", num_routes, "<br>",
+          "Trips AM: ", trips_am, "<br>",
+          "Trips PM: ", trips_pm, "<br>",
+          "Interval AM: ", round(interval_am, 1), " min<br>",
+          "Interval PM: ", round(interval_pm, 1), " min"
+        )
+      )
+  }
+
+  # Layer 5: Hub Points - DEFAULT VISIBLE, Indigo
+  cat("Adding Hub Points layer...\n")
+  map <- map %>%
     addCircleMarkers(
       data = all_hubs_sf,
-      radius = 3,
-      color = ~agency_pal(agency_name),
+      radius = 4,
+      color = COLOR_HUB_POINTS,
       stroke = FALSE,
       fillOpacity = 0.8,
-      group = "Transit Hub Points",
+      group = "Hub Points",
       popup = ~paste0(
         "<strong>", stop_name, "</strong><br>",
         "Agency: ", agency_name, "<br>",
@@ -209,9 +248,41 @@ create_interactive_map <- function(all_hubs_sf,
           ""
         )
       )
-    ) %>%
+    )
 
-    # Add Illinois state boundary outline (reference line, always visible)
+  # Layer 6: All Bus Routes (shapes) - HIDDEN, Gray
+  cat("Adding All Bus Routes layer...\n")
+  if (!is.null(all_shapes_sf) && nrow(all_shapes_sf) > 0) {
+    map <- map %>%
+      addPolylines(
+        data = all_shapes_sf,
+        color = COLOR_ALL_ROUTES,
+        weight = 2,
+        opacity = 0.5,
+        group = "All Bus Routes",
+        popup = ~paste0("Shape ID: ", unique_shape_id, "<br>Agency: ", agency)
+      )
+  }
+
+  # Layer 7: Bus Stops - HIDDEN, Steel Blue
+  cat("Adding Bus Stops layer...\n")
+  if (!is.null(all_stops) && nrow(all_stops) > 0) {
+    map <- map %>%
+      addCircleMarkers(
+        data = all_stops,
+        radius = 3,
+        color = COLOR_BUS_STOPS,
+        fillColor = "white",
+        fillOpacity = 0.8,
+        weight = 1,
+        group = "Bus Stops",
+        popup = ~paste0("<b>", stop_name, "</b><br>Stop ID: ", stop_id, "<br>Agency: ", agency)
+      )
+  }
+
+  # Add Illinois state boundary outline (reference line, always visible)
+  cat("Adding Illinois boundary...\n")
+  map <- map %>%
     addPolylines(
       data = illinois_boundary,
       color = "#666666",
@@ -220,43 +291,53 @@ create_interactive_map <- function(all_hubs_sf,
       fill = FALSE
     )
 
-  # Build overlay groups list dynamically
-  overlay_groups <- c(
-    "All Affected Areas (Hubs + Corridors)",
-    agency_hub_groups,
-    "All Corridors (1/8 mile)",
-    "Transit Hub Points"
-  )
-
-  # Build legend colors and labels dynamically
-  legend_colors <- c("purple", agency_colors[sapply(names(per_agency_union), get_agency_display_name)], "#FF8C00")
-  legend_labels <- c("All Affected Areas",
-                     paste0(sapply(names(per_agency_union), get_agency_display_name), " Hubs"),
-                     "All Corridors (dashed)")
-
   # Add layer controls
+  cat("Adding layer controls...\n")
   map <- map %>%
     addLayersControl(
       baseGroups = c("CartoDB.Positron"),
-      overlayGroups = overlay_groups,
+      overlayGroups = c(
+        "Combined Parking Relief (Hubs + Corridors)",
+        "Hub Buffers (1/2 mile)",
+        "Corridor Buffers (1/8 mile)",
+        "Corridor Segments (Qualifying)",
+        "Hub Points",
+        "All Bus Routes",
+        "Bus Stops"
+      ),
       options = layersControlOptions(collapsed = FALSE)
     ) %>%
 
-    # Hide individual layers by default, show only combined
+    # Hide all except combined parking relief and hub points
     hideGroup(c(
-      agency_hub_groups,
-      "All Corridors (1/8 mile)",
-      "Transit Hub Points"
-    )) %>%
+      "Hub Buffers (1/2 mile)",
+      "Corridor Buffers (1/8 mile)",
+      "Corridor Segments (Qualifying)",
+      "All Bus Routes",
+      "Bus Stops"
+    ))
 
-    # Add legend
+  # Add legend
+  cat("Adding legend...\n")
+  map <- map %>%
     addLegend(
       position = "bottomright",
-      colors = legend_colors,
-      labels = legend_labels,
+      colors = c(COLOR_PARKING_RELIEF, COLOR_HUB_BUFFER, COLOR_CORRIDOR_BUFFER,
+                 COLOR_CORRIDOR_SEGMENTS, COLOR_HUB_POINTS, COLOR_ALL_ROUTES, COLOR_BUS_STOPS),
+      labels = c(
+        "Combined Parking Relief",
+        "Hub Buffers (1/2 mi)",
+        "Corridor Buffers (1/8 mi)",
+        "Corridor Segments",
+        "Transit Hubs",
+        "All Bus Routes",
+        "Bus Stops"
+      ),
+      title = "Transit-Oriented Areas",
       opacity = 0.7
     ) %>%
 
+    # Add controls
     addFullscreenControl() %>%
     addMeasure(
       position = "bottomleft",
@@ -266,7 +347,9 @@ create_interactive_map <- function(all_hubs_sf,
       completedColor = "#7D4479"
     )
 
-  cat("Interactive map created successfully\n")
+  cat("Interactive map created successfully\n\n")
+  cat("Default view: Combined Parking Relief + Hub Points\n")
+  cat("7 toggleable layers available\n")
 
   return(map)
 }
