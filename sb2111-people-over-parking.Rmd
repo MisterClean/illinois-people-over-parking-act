@@ -339,11 +339,11 @@ This analysis implements the following methodology to identify qualifying transi
 
 **Representative Service Selection:**
 
--   For each transit agency, we select a **single representative weekday service_id** rather than combining all weekday services
+-   To ensure frequency calculations reflect actual service levels, we select **representative weekday service(s)** for each agency using a tiered approach:
+-   **Primary method**: Use `calendar.txt` weekday services (Monday-Friday flags all set to 1)
+-   **Multi-service handling**: If an agency has multiple weekday services covering different routes (e.g., PACE with regional divisions), ALL weekday services are included to ensure complete route coverage
+-   **Fallback method**: If no weekday services in calendar.txt, find services running on a representative Tuesday using `calendar_dates.txt`
 -   This prevents inflating trip counts when agencies define the same schedule multiple times for different calendar dates
--   Selection strategy: Find services running on the next upcoming Tuesday (a typical weekday), or the most recent Tuesday if none upcoming
--   If multiple services run on the same day, the service with the most trips is selected
--   This ensures frequency calculations reflect actual service levels, not artifacts of how calendar data is structured
 
 **Peak Period Definition:**
 
@@ -351,11 +351,13 @@ This analysis implements the following methodology to identify qualifying transi
 -   Afternoon peak: 4:00 PM - 6:00 PM (120 minutes)
 -   Service is analyzed separately for each period; locations qualify if they meet frequency thresholds in **either** AM **or** PM
 
-**Stop Clustering (Bus Hubs Only):**
+**Stop Clustering (Hubs and Corridors):**
 
 -   Bus stops within **150 feet** of each other are spatially clustered to represent physical intersections
 -   This prevents overcounting stops at the same street corner and aligns with the statutory concept of "an intersection of 2 or more bus routes"
 -   Clustering uses Illinois State Plane East projection (EPSG:3435) for accurate distance measurement
+-   Clustering uses a **connected components algorithm** (breadth-first search) for deterministic, reproducible results
+-   Corridors also use stop clustering to create edges between consecutive clusters along trip paths
 
 **Route Overlap Verification (Bus Hubs Only):**
 
@@ -391,7 +393,9 @@ This analysis implements the following methodology to identify qualifying transi
 
 **Direction Handling:**
 
--   If GTFS `direction_id` data is available, routes are analyzed by direction (northbound/southbound, eastbound/westbound)
+-   If GTFS `direction_id` data is available, frequency is calculated by direction for **both hubs and corridors**:
+    - **Hubs**: Frequency calculated per cluster per direction
+    - **Corridors**: Frequency calculated per edge per direction
 -   For corridors, when multiple routes overlap on the same street:
   - Trips are summed across routes **within each direction** (e.g., all northbound trips together)
   - This reflects actual transit availability: if you're waiting for a northbound bus, you can take any northbound route
@@ -403,8 +407,9 @@ This analysis implements the following methodology to identify qualifying transi
 2. **Edge building:** Create edges between consecutive clusters along each trip
 3. **Aggregation:** Sum trips across all routes using each edge, within each direction/peak
 4. **Shape extraction:** Use GTFS shapes.txt to create accurate edge geometries following actual vehicle paths
-5. **Qualification:** Edges qualify if combined frequency ≤15 minutes in any direction/peak
-6. **Buffering:** Qualified edges are buffered by **680 feet** (660 ft = 1/8 mile + 20 ft half street width) and clipped to Illinois boundary
+5. **Fallback geometry:** If shape extraction fails (no shape available, invalid geometry), use straight line between cluster centroids
+6. **Qualification:** Edges qualify if combined frequency ≤15 minutes in any direction/peak
+7. **Buffering:** Qualified edges are buffered by **680 feet** (660 ft = 1/8 mile + 20 ft half street width) and clipped to Illinois boundary
 
 **Key advantages of edge-based methodology:**
 
@@ -468,7 +473,3 @@ This analysis incorporates **14 transit agencies** covering major urban areas ac
 
 -   GTFS shapes.txt from all 14 agencies (actual transit route geometry)
 -   Illinois state boundary via TIGER/Line (tigris package)
-
-**Counties Covered:**
-
-The analysis includes **14 Illinois counties** across major urban areas: - **Chicago Metro:** Cook, DuPage, Kane, Lake, McHenry, Will - **Metro-East:** St. Clair - **Central Illinois:** Champaign, McLean, Peoria, Sangamon, Macon - **Northern Illinois:** Winnebago, DeKalb, Rock Island - **Western Illinois:** Knox, McDonough
