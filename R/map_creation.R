@@ -308,11 +308,12 @@ create_interactive_map <- function(all_hubs_sf,
       options = layersControlOptions(collapsed = FALSE)
     ) %>%
 
-    # Hide all except combined parking relief and hub points
+    # Hide all except combined parking relief
     hideGroup(c(
       "Hub Buffers (1/2 mile)",
       "Corridor Buffers (1/8 mile)",
       "Corridor Segments (Qualifying)",
+      "Hub Points",
       "All Bus Routes",
       "Bus Stops"
     ))
@@ -348,7 +349,7 @@ create_interactive_map <- function(all_hubs_sf,
     )
 
   cat("Interactive map created successfully\n\n")
-  cat("Default view: Combined Parking Relief + Hub Points\n")
+  cat("Default view: Combined Parking Relief\n")
   cat("7 toggleable layers available\n")
 
   return(map)
