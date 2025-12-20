@@ -16,6 +16,8 @@ knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 
 Note: The People Over Parking Act was made possible by the volunteers of [Abundant Housing Illinois](https://abundanthousingillinois.org/). Please consider joining as a member if you are interested in organizing for more land use reform in Illinois.
 
+**Update:** The People Over Parking Act in (SB2111)[has been signed into law by Governor Pritzker](https://gov-pritzker-newsroom.prezly.com/fact-sheet-northern-illinois-transit-authority-act-sb-2111) and will take effect on June 1, 2026.
+
 ### What Are Parking Mandates?
 
 Parking mandates, also known as parking minimums, are zoning regulations that require developers to build a minimum number of parking spaces with new housing and commercial developments. These mandates typically specify a certain number of parking spaces per unit of housing, square footage of retail space, or other metrics depending on the development type.
@@ -37,6 +39,21 @@ Parking mandates, also known as parking minimums, are zoning regulations that re
 -   **Vibrant Communities**: Space previously dedicated to parking can be repurposed for housing, businesses, and community amenities.
 
 ### Enter: The People Over Parking Act
+
+The People Over Parking Act prohibits local governments from imposing or enforcing minimum automobile parking requirements on development projects located near frequent transit service. The law applies to two types of transit-accessible areas:
+
+**Qualifying Areas:**
+
+-   **Transit Hubs** (1/2 mile radius): Rail stations, ferry terminals served by transit, or intersections where 2 or more bus routes meet with combined service every 15 minutes or less during peak commute periods
+-   **Transit Corridors** (1/8 mile buffer): Streets served by one or more bus routes with combined service every 15 minutes or less during peak commute periods
+
+Developers may still voluntarily build parking, and municipalities retain authority to regulate on-street parking, set maximum parking limits, and require bicycle parking. The law does not apply to hotels, motels, or other transient lodging.
+
+**Qualification Criteria (as implemented in this analysis):**
+
+-   **Bus Hubs**: Must have **2 or more routes** AND **combined frequency ≤ 15 minutes** in at least one peak period AND **routes must overlap on same street/intersection**
+-   **Bus Corridors**: Must have **1 or more routes** AND **direction-aware combined frequency ≤ 15 minutes** in at least one peak period
+-   **Rail Hubs**: All rail stations within Illinois automatically qualify (CTA rail, Metra, and Metro St. Louis MetroLink)
 
 ```{r packages, results='hide'}
 # Set CRAN mirror
@@ -293,6 +310,31 @@ total_bus_hubs <- nrow(all_hubs_sf[all_hubs_sf$type == "bus_hub", ])
 total_qualifying_segments <- nrow(qualifying_corridor_segments_sf)
 ```
 
+```{r create_map}
+## Create Interactive Map
+
+# Convert shapes to linestrings for map display (suppress console output)
+invisible(capture.output({
+  all_shapes_sf <- convert_shapes_to_linestrings(all_shapes)
+}))
+
+# Create the interactive map with all layers (suppress console output)
+invisible(capture.output({
+  final_map <- create_interactive_map(
+    all_hubs_sf = all_hubs_sf,
+    all_affected_areas = all_affected_areas_combined,
+    hub_buffers = hub_buffers,
+    all_corridors_union = all_corridors_union_wgs84,
+    qualifying_corridor_segments_sf = qualifying_corridor_segments_sf,
+    all_shapes_sf = all_shapes_sf,
+    all_stops = all_stops,
+    illinois_boundary = illinois_boundary
+  )
+}))
+
+final_map
+```
+
 ```{r summary_table}
 # Create summary table for display
 summary_data <- data.frame(
@@ -308,29 +350,6 @@ summary_data <- data.frame(
 
 kable(summary_data, caption = "Transit Hub and Corridor Summary") %>%
   kable_styling(bootstrap_options = c("striped", "hover"))
-```
-
-```{r create_map}
-## Create Interactive Map
-
-# Convert shapes to linestrings for map display
-cat("Converting GTFS shapes to linestrings for visualization...\n")
-all_shapes_sf <- convert_shapes_to_linestrings(all_shapes)
-
-# Create the interactive map with all layers
-# Now includes corridor segments, all routes, and bus stops for detailed visualization
-final_map <- create_interactive_map(
-  all_hubs_sf = all_hubs_sf,
-  all_affected_areas = all_affected_areas_combined,
-  hub_buffers = hub_buffers,
-  all_corridors_union = all_corridors_union_wgs84,
-  qualifying_corridor_segments_sf = qualifying_corridor_segments_sf,
-  all_shapes_sf = all_shapes_sf,
-  all_stops = all_stops,
-  illinois_boundary = illinois_boundary
-)
-
-final_map
 ```
 
 ### Methodology
@@ -381,15 +400,6 @@ This analysis implements the following methodology to identify qualifying transi
 -   To improve performance with large datasets, corridors are processed separately for each agency
 -   **Exception**: PACE and CTA are processed together since their routes can overlap in the Chicago suburbs
 -   This ensures overlapping routes from different agencies are correctly combined while avoiding expensive cross-agency comparisons where overlap is impossible
-
-**Qualification Criteria:**
-
--   **Bus Hubs**: Must have **2 or more routes** AND **combined frequency ≤ 15 minutes** in at least one peak period AND **routes must overlap on same street/intersection**
--   **Bus Corridors**: Must have **1 or more routes** AND **direction-aware combined frequency ≤ 15 minutes** in at least one peak period
-  - Routes on the same street that individually don't qualify may qualify together if their combined frequency meets the threshold
-  - Directions are kept separate (northbound and southbound are not combined)
-  - A corridor qualifies if **any direction in any peak period** has combined frequency ≤15 minutes
--   **Rail Hubs**: All rail stations within Illinois automatically qualify (CTA rail, Metra, and Metro St. Louis MetroLink)
 
 **Direction Handling:**
 
